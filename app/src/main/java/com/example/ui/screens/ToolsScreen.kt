@@ -54,6 +54,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -86,7 +87,13 @@ fun ToolsScreen(
     val isBatchRunning by viewModel.isBatchRunning.collectAsStateWithLifecycle()
     val batchCurrentIndex by viewModel.batchCurrentIndex.collectAsStateWithLifecycle()
 
-    var cacheClearedMessage by remember { mutableStateOf<String?>(null) }
+    val cacheSizeBytes by viewModel.cacheSizeBytes.collectAsStateWithLifecycle()
+    val isClearingCache by viewModel.isClearingCache.collectAsStateWithLifecycle()
+    val cacheMessage by viewModel.cacheOperationMessage.collectAsStateWithLifecycle()
+
+    LaunchedEffect(Unit) {
+        viewModel.refreshCacheSize()
+    }
 
     val batchPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetMultipleContents()
@@ -470,7 +477,7 @@ fun ToolsScreen(
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                         )
                         Text(
-                            text = "Clear temporary files created during conversion",
+                            text = "Clear temporary files created during conversion and book reading",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -479,50 +486,93 @@ fun ToolsScreen(
 
                 HorizontalDivider()
 
-                val cacheSize = remember(cacheClearedMessage) {
-                    val cacheFiles = context.cacheDir.listFiles() ?: emptyArray()
-                    cacheFiles.sumOf { it.length() }
-                }
-
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Temporary Cache Size",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            text = "Coil thumbnails, conversion staging buffers & temp files",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     Text(
-                        text = "Temporary Cache Size",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Text(
-                        text = formatBytes(cacheSize),
-                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                        text = if (cacheSizeBytes <= 0L) "0 B (Clean)" else formatBytes(cacheSizeBytes),
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = if (cacheSizeBytes <= 0L) GreenSuccess else MaterialTheme.colorScheme.primary
+                        )
                     )
                 }
 
                 OutlinedButton(
-                    onClick = {
-                        try {
-                            context.cacheDir.listFiles()?.forEach { it.delete() }
-                            cacheClearedMessage = "Cache cleared successfully!"
-                        } catch (e: Exception) {
-                            cacheClearedMessage = "Error clearing cache."
-                        }
-                    },
+                    onClick = { viewModel.clearAppCache() },
+                    enabled = !isClearingCache,
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("clear_cache_button")
                 ) {
-                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Clear Temporary Cache")
+                    if (isClearingCache) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Clearing Cache...")
+                    } else {
+                        Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(if (cacheSizeBytes <= 0L) "Clean Cache (Empty)" else "Clear Temporary Cache")
+                    }
                 }
 
-                if (cacheClearedMessage != null) {
-                    Text(
-                        text = cacheClearedMessage!!,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = GreenSuccess
-                    )
+                if (cacheMessage != null) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (cacheMessage!!.contains("Error") || cacheMessage!!.contains("Failed")) {
+                            MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+                        } else {
+                            GreenSuccess.copy(alpha = 0.12f)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (cacheMessage!!.contains("Error") || cacheMessage!!.contains("Failed")) {
+                                    Icons.Default.ErrorOutline
+                                } else {
+                                    Icons.Default.CheckCircle
+                                },
+                                contentDescription = null,
+                                tint = if (cacheMessage!!.contains("Error") || cacheMessage!!.contains("Failed")) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    GreenSuccess
+                                },
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = cacheMessage!!,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (cacheMessage!!.contains("Error") || cacheMessage!!.contains("Failed")) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    GreenSuccess
+                                }
+                            )
+                        }
+                    }
                 }
             }
         }

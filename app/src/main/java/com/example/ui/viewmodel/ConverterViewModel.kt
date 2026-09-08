@@ -19,7 +19,11 @@ import com.example.reader.EpubParser
 import com.example.reader.ParsedEpubBook
 import com.example.reader.ReaderSettings
 import com.example.reader.ReaderTheme
+import com.example.reader.ReaderTtsManager
 import com.example.reader.ThemeMode
+import com.example.reader.TtsState
+import com.example.ui.components.formatBytes
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -82,6 +86,26 @@ class ConverterViewModel(application: Application) : AndroidViewModel(applicatio
             ThemeMode.SYSTEM -> ThemeMode.DARK
         }
         setThemeMode(next)
+    }
+
+    // Cache management state
+    private val _cacheSizeBytes = MutableStateFlow(0L)
+    val cacheSizeBytes: StateFlow<Long> = _cacheSizeBytes.asStateFlow()
+
+    private val _isClearingCache = MutableStateFlow(false)
+    val isClearingCache: StateFlow<Boolean> = _isClearingCache.asStateFlow()
+
+    private val _cacheOperationMessage = MutableStateFlow<String?>(null)
+    val cacheOperationMessage: StateFlow<String?> = _cacheOperationMessage.asStateFlow()
+
+    // Text-to-Speech Engine
+    val ttsManager = ReaderTtsManager(application, viewModelScope) { finishedIndex ->
+        onTtsChapterFinished(finishedIndex)
+    }
+    val ttsState: StateFlow<TtsState> = ttsManager.state
+
+    init {
+        refreshCacheSize()
     }
 
     // Single conversion state
@@ -554,6 +578,7 @@ class ConverterViewModel(application: Application) : AndroidViewModel(applicatio
     fun setChapter(index: Int) {
         val book = _activeReaderBook.value ?: return
         val validIndex = index.coerceIn(0, (book.chapters.size - 1).coerceAtLeast(0))
+        val changed = _currentChapterIndex.value != validIndex
         _currentChapterIndex.value = validIndex
 
         _activeBookRecord.value?.let { record ->
@@ -561,7 +586,69 @@ class ConverterViewModel(application: Application) : AndroidViewModel(applicatio
                 repository.updateReadingProgress(record.id, validIndex, 0)
             }
         }
+
+        if (changed && ttsManager.state.value.isPlaying) {
+            val newCh = book.chapters.getOrNull(validIndex)
+            if (newCh != null) {
+                ttsManager.startChapter(
+                    chapterIndex = validIndex,
+                    chapterTitle = newCh.title,
+                    paragraphs = newCh.paragraphs,
+                    startParagraphIndex = 0
+                )
+            } else {
+                ttsManager.stop()
+            }
+        }
     }
+
+    private fun onTtsChapterFinished(finishedIndex: Int) {
+        val book = _activeReaderBook.value ?: return
+        if (finishedIndex < book.chapters.size - 1) {
+            val nextIdx = finishedIndex + 1
+            setChapter(nextIdx)
+            val nextChapter = book.chapters.getOrNull(nextIdx)
+            if (nextChapter != null) {
+                ttsManager.startChapter(
+                    chapterIndex = nextIdx,
+                    chapterTitle = nextChapter.title,
+                    paragraphs = nextChapter.paragraphs,
+                    startParagraphIndex = 0
+                )
+            }
+        } else {
+            ttsManager.stop()
+        }
+    }
+
+    fun toggleTtsPlayPause() {
+        val book = _activeReaderBook.value ?: return
+        val chapter = book.chapters.getOrNull(_currentChapterIndex.value) ?: return
+        ttsManager.togglePlayPause(
+            currentChapterIndex = _currentChapterIndex.value,
+            currentChapterTitle = chapter.title,
+            paragraphs = chapter.paragraphs
+        )
+    }
+
+    fun startTtsAtParagraph(chapterIndex: Int, chapterTitle: String, paragraphs: List<String>, paragraphIndex: Int) {
+        ttsManager.startChapter(
+            chapterIndex = chapterIndex,
+            chapterTitle = chapterTitle,
+            paragraphs = paragraphs,
+            startParagraphIndex = paragraphIndex
+        )
+    }
+
+    fun pauseTts() = ttsManager.pause()
+    fun resumeTts() = ttsManager.resume()
+    fun stopTts() = ttsManager.stop()
+    fun skipTtsNext() = ttsManager.skipNext()
+    fun skipTtsPrevious() = ttsManager.skipPrevious()
+    fun setTtsSpeechRate(rate: Float) = ttsManager.setSpeechRate(rate)
+    fun setTtsPitch(pitch: Float) = ttsManager.setPitch(pitch)
+    fun setTtsVisible(visible: Boolean) = ttsManager.setVisible(visible)
+    fun closeTts() = ttsManager.closePlayer()
 
     fun updateReadingScrollOffset(offset: Int) {
         val record = _activeBookRecord.value ?: return
@@ -594,7 +681,103 @@ class ConverterViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun closeReader() {
+        ttsManager.stop()
         _activeReaderBook.value = null
         _activeBookRecord.value = null
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        ttsManager.release()
+    }
+
+    fun refreshCacheSize() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _cacheSizeBytes.value = calculateTotalCacheBytes()
+        }
+    }
+
+    private fun calculateTotalCacheBytes(): Long {
+        val context = getApplication<Application>()
+        var total = 0L
+        total += getFolderSize(context.cacheDir)
+        total += getFolderSize(context.codeCacheDir)
+        try {
+            context.externalCacheDir?.let { total += getFolderSize(it) }
+        } catch (_: Exception) {}
+        return total
+    }
+
+    private fun getFolderSize(file: File?): Long {
+        if (file == null || !file.exists()) return 0L
+        if (!file.isDirectory) return file.length()
+        var size = 0L
+        val children = file.listFiles() ?: return 0L
+        for (child in children) {
+            size += if (child.isDirectory) getFolderSize(child) else child.length()
+        }
+        return size
+    }
+
+    fun clearAppCache() {
+        if (_isClearingCache.value) return
+        _isClearingCache.value = true
+        _cacheOperationMessage.value = null
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val context = getApplication<Application>()
+                val initialBytes = calculateTotalCacheBytes()
+
+                // 1. Clear Coil image loader caches
+                try {
+                    coil.Coil.imageLoader(context).apply {
+                        diskCache?.clear()
+                        memoryCache?.clear()
+                    }
+                } catch (_: Exception) {}
+
+                // 2. Delete cacheDir contents recursively
+                deleteDirChildrenRecursively(context.cacheDir)
+
+                // 3. Delete codeCacheDir contents recursively
+                deleteDirChildrenRecursively(context.codeCacheDir)
+
+                // 4. Delete externalCacheDir contents recursively
+                try {
+                    deleteDirChildrenRecursively(context.externalCacheDir)
+                } catch (_: Exception) {}
+
+                // Re-create necessary subfolders for ongoing app functions
+                File(context.cacheDir, "opened_epubs").mkdirs()
+
+                val remainingBytes = calculateTotalCacheBytes()
+                _cacheSizeBytes.value = remainingBytes
+                val freedBytes = maxOf(0L, initialBytes - remainingBytes)
+
+                _isClearingCache.value = false
+                _cacheOperationMessage.value = if (freedBytes > 0L) {
+                    "Cache cleared successfully! Freed ${formatBytes(freedBytes)}."
+                } else {
+                    "Cache is already empty (0 B)."
+                }
+            } catch (e: Exception) {
+                _isClearingCache.value = false
+                _cacheOperationMessage.value = "Error clearing cache: ${e.localizedMessage ?: "Unknown error"}"
+            }
+        }
+    }
+
+    private fun deleteDirChildrenRecursively(dir: File?) {
+        if (dir == null || !dir.exists()) return
+        val children = dir.listFiles() ?: return
+        for (child in children) {
+            try {
+                if (child.isDirectory) {
+                    child.deleteRecursively()
+                } else {
+                    child.delete()
+                }
+            } catch (_: Exception) {}
+        }
     }
 }

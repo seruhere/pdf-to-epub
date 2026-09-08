@@ -42,12 +42,19 @@ import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.FormatAlignJustify
 import androidx.compose.material.icons.filled.FormatAlignLeft
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.filled.FindInPage
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.LinearScale
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -64,12 +71,17 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -93,10 +105,12 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.example.data.model.ConvertedBook
+import com.example.reader.ReaderChapter
 import com.example.reader.ReaderFontFamily
 import com.example.reader.ReaderTextAlign
 import com.example.reader.ReaderTheme
 import com.example.ui.components.EpubTextRenderer
+import com.example.ui.components.TtsReaderControlsBar
 import com.example.ui.components.formatBytes
 import com.example.ui.viewmodel.ConverterViewModel
 import kotlinx.coroutines.launch
@@ -116,12 +130,22 @@ fun ReaderScreen(
     val settings by viewModel.readerSettings.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoadingReader.collectAsStateWithLifecycle()
     val libraryBooks by viewModel.libraryBooks.collectAsStateWithLifecycle()
+    val ttsState by viewModel.ttsState.collectAsStateWithLifecycle()
+
+    DisposableEffect(Unit) {
+        onDispose {
+            viewModel.pauseTts()
+        }
+    }
 
     var showTocSheet by remember { mutableStateOf(false) }
     var showSettingsSheet by remember { mutableStateOf(false) }
     var showSwitchBookSheet by remember { mutableStateOf(false) }
     var isSearchVisible by remember { mutableStateOf(false) }
     var chapterSearchQuery by remember { mutableStateOf("") }
+    var showJumpToPageDialog by remember { mutableStateOf(false) }
+    var showReadingSlider by remember { mutableStateOf(true) }
+    var pendingScrollFraction by remember { mutableStateOf<Float?>(null) }
 
     val scrollState = rememberScrollState()
     val coroutineScope = rememberCoroutineScope()
@@ -133,9 +157,25 @@ fun ReaderScreen(
         uri?.let { viewModel.openEpubFromUri(it) }
     }
 
-    // Reset scroll when chapter changes
+    // Reset scroll when chapter changes, or scroll to pending target fraction
     LaunchedEffect(currentChapterIndex) {
-        scrollState.scrollTo(0)
+        if (pendingScrollFraction != null) {
+            kotlinx.coroutines.delay(60)
+            val maxScroll = scrollState.maxValue
+            val target = (pendingScrollFraction!! * maxScroll).toInt()
+            scrollState.scrollTo(target)
+            pendingScrollFraction = null
+        } else {
+            scrollState.scrollTo(0)
+        }
+    }
+
+    LaunchedEffect(pendingScrollFraction) {
+        val fraction = pendingScrollFraction ?: return@LaunchedEffect
+        val maxScroll = scrollState.maxValue
+        val target = (fraction * maxScroll).toInt()
+        scrollState.scrollTo(target)
+        pendingScrollFraction = null
     }
 
     // Periodically sync scroll offset for reading progress persistence
@@ -184,6 +224,15 @@ fun ReaderScreen(
     val chapters = book.chapters
     val currentChapter = chapters.getOrNull(currentChapterIndex) ?: chapters.first()
 
+    // Auto-scroll when TTS reads aloud across paragraphs
+    LaunchedEffect(ttsState.paragraphIndex, ttsState.isPlaying) {
+        if (ttsState.isPlaying && ttsState.chapterIndex == currentChapterIndex && currentChapter.paragraphs.isNotEmpty() && !scrollState.isScrollInProgress) {
+            val progress = (ttsState.paragraphIndex.toFloat() / currentChapter.paragraphs.size.toFloat()).coerceIn(0f, 1f)
+            val target = (progress * scrollState.maxValue).toInt()
+            scrollState.animateScrollTo(target)
+        }
+    }
+
     // Reading Progress Calculations
     val chapterScrollProgress by remember {
         derivedStateOf {
@@ -199,6 +248,77 @@ fun ReaderScreen(
                 ((currentChapterIndex.toFloat() + chapterScrollProgress) / chapters.size.toFloat()).coerceIn(0f, 1f)
             } else 0f
         }
+    }
+
+    // Estimated Page calculations (approx. 250 words per page)
+    val estimatedPagesInCurrentChapter = remember(currentChapter.wordCount) {
+        maxOf(1, (currentChapter.wordCount / 250).coerceAtLeast(1))
+    }
+    val currentChapterPage = remember(chapterScrollProgress, estimatedPagesInCurrentChapter) {
+        ((chapterScrollProgress * (estimatedPagesInCurrentChapter - 1)).toInt() + 1).coerceIn(1, estimatedPagesInCurrentChapter)
+    }
+    val pagesPerChapter = remember(chapters) {
+        chapters.map { ch -> maxOf(1, (ch.wordCount / 250).coerceAtLeast(1)) }
+    }
+    val totalBookPages = remember(pagesPerChapter) {
+        pagesPerChapter.sum().coerceAtLeast(1)
+    }
+    val currentGlobalPage = remember(currentChapterIndex, currentChapterPage, pagesPerChapter) {
+        val prevPages = pagesPerChapter.take(currentChapterIndex).sum()
+        (prevPages + currentChapterPage).coerceIn(1, totalBookPages)
+    }
+
+    // Jump to Page / Section Dialog
+    if (showJumpToPageDialog) {
+        JumpToPageDialog(
+            currentGlobalPage = currentGlobalPage,
+            totalBookPages = totalBookPages,
+            currentChapterIndex = currentChapterIndex,
+            totalChapters = chapters.size,
+            currentChapterTitle = currentChapter.title,
+            currentSectionProgress = chapterScrollProgress,
+            pagesPerChapter = pagesPerChapter,
+            chapters = chapters,
+            theme = settings.theme,
+            onDismiss = { showJumpToPageDialog = false },
+            onJumpToBookPage = { targetPage ->
+                showJumpToPageDialog = false
+                val clampedPage = targetPage.coerceIn(1, totalBookPages)
+                var accumulated = 0
+                var targetCh = 0
+                var targetFraction = 0f
+                for ((idx, pCount) in pagesPerChapter.withIndex()) {
+                    if (clampedPage <= accumulated + pCount || idx == pagesPerChapter.size - 1) {
+                        targetCh = idx
+                        val pInCh = (clampedPage - accumulated).coerceIn(1, pCount)
+                        targetFraction = if (pCount > 1) {
+                            (pInCh - 1).toFloat() / (pCount - 1).toFloat()
+                        } else 0f
+                        break
+                    }
+                    accumulated += pCount
+                }
+                if (targetCh != currentChapterIndex) {
+                    pendingScrollFraction = targetFraction
+                    viewModel.setChapter(targetCh)
+                } else {
+                    coroutineScope.launch {
+                        scrollState.animateScrollTo((targetFraction * scrollState.maxValue).toInt())
+                    }
+                }
+            },
+            onJumpToChapterSection = { targetCh, fraction ->
+                showJumpToPageDialog = false
+                if (targetCh != currentChapterIndex) {
+                    pendingScrollFraction = fraction
+                    viewModel.setChapter(targetCh)
+                } else {
+                    coroutineScope.launch {
+                        scrollState.animateScrollTo((fraction * scrollState.maxValue).toInt())
+                    }
+                }
+            }
+        )
     }
 
     // Table of Contents Sheet
@@ -682,6 +802,30 @@ fun ReaderScreen(
                             }
                         }
 
+                        // Jump to Page / Section Action
+                        IconButton(
+                            onClick = { showJumpToPageDialog = true },
+                            modifier = Modifier.testTag("reader_jump_to_page_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FindInPage,
+                                contentDescription = "Jump to page",
+                                tint = settings.theme.textColor
+                            )
+                        }
+
+                        // Toggle Reading Slider Option
+                        IconButton(
+                            onClick = { showReadingSlider = !showReadingSlider },
+                            modifier = Modifier.testTag("reader_toggle_slider_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.LinearScale,
+                                contentDescription = if (showReadingSlider) "Hide reading slider" else "Show reading slider",
+                                tint = if (showReadingSlider) settings.theme.accentColor else settings.theme.textColor
+                            )
+                        }
+
                         // Quick Dark Mode Toggle
                         IconButton(
                             onClick = { viewModel.toggleReaderDarkTheme() },
@@ -715,6 +859,23 @@ fun ReaderScreen(
                                 imageVector = Icons.Default.FormatSize,
                                 contentDescription = "Reader typography and settings",
                                 tint = settings.theme.textColor
+                            )
+                        }
+
+                        // Text-to-Speech (Read Aloud) Button
+                        IconButton(
+                            onClick = {
+                                if (!ttsState.isVisible) {
+                                    viewModel.setTtsVisible(true)
+                                }
+                                viewModel.toggleTtsPlayPause()
+                            },
+                            modifier = Modifier.testTag("reader_tts_toggle_button")
+                        ) {
+                            Icon(
+                                imageVector = if (ttsState.isPlaying) Icons.Default.GraphicEq else Icons.Default.Headphones,
+                                contentDescription = if (ttsState.isPlaying) "Pause Reading Aloud" else "Read Aloud with Text-to-Speech",
+                                tint = if (ttsState.isPlaying || ttsState.isVisible) settings.theme.accentColor else settings.theme.textColor
                             )
                         }
                     }
@@ -842,6 +1003,15 @@ fun ReaderScreen(
                 bookTitle = book.title,
                 totalChapters = chapters.size,
                 searchQuery = chapterSearchQuery,
+                activeTtsParagraphIndex = if ((ttsState.isPlaying || ttsState.isPaused) && ttsState.chapterIndex == currentChapterIndex) ttsState.paragraphIndex else null,
+                onPlayFromParagraph = { paraIdx ->
+                    viewModel.startTtsAtParagraph(
+                        chapterIndex = currentChapterIndex,
+                        chapterTitle = currentChapter.title,
+                        paragraphs = currentChapter.paragraphs,
+                        paragraphIndex = paraIdx
+                    )
+                },
                 onNextChapter = {
                     viewModel.nextChapter()
                 },
@@ -849,16 +1019,185 @@ fun ReaderScreen(
             )
         }
 
-        // Bottom Chapter Pager & Progress Status Bar
+        // Docked Text-to-Speech Controls Bar
+        AnimatedVisibility(
+            visible = ttsState.isVisible || ttsState.isPlaying || ttsState.isPaused,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut()
+        ) {
+            TtsReaderControlsBar(
+                ttsState = ttsState,
+                readerTheme = settings.theme,
+                onTogglePlayPause = { viewModel.toggleTtsPlayPause() },
+                onSkipNext = { viewModel.skipTtsNext() },
+                onSkipPrevious = { viewModel.skipTtsPrevious() },
+                onStop = { viewModel.stopTts() },
+                onClose = { viewModel.closeTts() },
+                onSetSpeechRate = { viewModel.setTtsSpeechRate(it) }
+            )
+        }
+
+        // Bottom Chapter Pager & Reading Slider Bar
         Surface(
             color = settings.theme.backgroundColor,
-            shadowElevation = 6.dp
+            shadowElevation = 8.dp
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 6.dp)
             ) {
+                // Reading Slider Option to jump to a particular section of the page/chapter
+                AnimatedVisibility(
+                    visible = showReadingSlider,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut()
+                ) {
+                    var isDraggingSlider by remember { mutableStateOf(false) }
+                    var localSliderValue by remember { mutableFloatStateOf(0f) }
+                    val activeSliderVal = if (isDraggingSlider) localSliderValue else chapterScrollProgress
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 6.dp)
+                    ) {
+                        // Header: Reading section feedback and Jump to Page trigger
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.LinearScale,
+                                    contentDescription = null,
+                                    tint = settings.theme.accentColor,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "Section ${(activeSliderVal * 100).toInt()}% • Page $currentChapterPage/$estimatedPagesInCurrentChapter",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = settings.theme.textColor
+                                )
+                            }
+
+                            TextButton(
+                                onClick = { showJumpToPageDialog = true },
+                                modifier = Modifier
+                                    .height(32.dp)
+                                    .testTag("reader_jump_to_page_bottom_btn")
+                            ) {
+                                Icon(
+                                    Icons.Default.FindInPage,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(15.dp),
+                                    tint = settings.theme.accentColor
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Jump to Page",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = settings.theme.accentColor
+                                )
+                            }
+                        }
+
+                        // Reading Slider: Drag to jump to any section of the page/chapter
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Top",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = settings.theme.textColor.copy(alpha = 0.6f)
+                            )
+
+                            Slider(
+                                value = activeSliderVal.coerceIn(0f, 1f),
+                                onValueChange = { newVal ->
+                                    isDraggingSlider = true
+                                    localSliderValue = newVal
+                                    coroutineScope.launch {
+                                        val targetOffset = (newVal * scrollState.maxValue).toInt()
+                                        scrollState.scrollTo(targetOffset)
+                                    }
+                                },
+                                onValueChangeFinished = {
+                                    isDraggingSlider = false
+                                },
+                                colors = SliderDefaults.colors(
+                                    thumbColor = settings.theme.accentColor,
+                                    activeTrackColor = settings.theme.accentColor,
+                                    inactiveTrackColor = settings.theme.textColor.copy(alpha = 0.2f)
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("reading_section_slider")
+                            )
+
+                            Text(
+                                text = "End",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = settings.theme.textColor.copy(alpha = 0.6f)
+                            )
+                        }
+
+                        // Quick Section Jump Chips
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            listOf(
+                                0.0f to "0% Top",
+                                0.25f to "25%",
+                                0.50f to "50% Mid",
+                                0.75f to "75%",
+                                1.0f to "100% End"
+                            ).forEach { (targetFraction, label) ->
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (kotlin.math.abs(activeSliderVal - targetFraction) < 0.12f) {
+                                        settings.theme.accentColor.copy(alpha = 0.2f)
+                                    } else {
+                                        settings.theme.textColor.copy(alpha = 0.06f)
+                                    },
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            coroutineScope.launch {
+                                                val targetOffset = (targetFraction * scrollState.maxValue).toInt()
+                                                scrollState.animateScrollTo(targetOffset)
+                                            }
+                                        }
+                                ) {
+                                    Text(
+                                        text = label,
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = if (kotlin.math.abs(activeSliderVal - targetFraction) < 0.12f) FontWeight.Bold else FontWeight.Normal,
+                                            fontSize = 10.sp
+                                        ),
+                                        color = if (kotlin.math.abs(activeSliderVal - targetFraction) < 0.12f) settings.theme.accentColor else settings.theme.textColor.copy(alpha = 0.75f),
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+                        HorizontalDivider(
+                            color = settings.theme.textColor.copy(alpha = 0.1f),
+                            thickness = 0.5.dp
+                        )
+                    }
+                }
+
+                // Chapter Navigation & Book Progress Summary
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -874,14 +1213,19 @@ fun ReaderScreen(
                         Text("Prev Chapter")
                     }
 
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .clickable { showJumpToPageDialog = true }
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                    ) {
                         Text(
-                            text = "Ch. ${currentChapterIndex + 1} of ${chapters.size}",
+                            text = "Ch. ${currentChapterIndex + 1} of ${chapters.size} • Pg $currentGlobalPage/$totalBookPages",
                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                             color = settings.theme.textColor
                         )
                         Text(
-                            text = "${(overallBookProgress * 100).toInt()}% of book",
+                            text = "${(overallBookProgress * 100).toInt()}% of book • Tap to Jump",
                             style = MaterialTheme.typography.labelSmall,
                             color = settings.theme.accentColor
                         )
@@ -1156,4 +1500,437 @@ fun ReaderShelfView(
             }
         }
     }
+}
+
+/**
+ * Dedicated Jump to Page and Section Dialog allowing immediate jump
+ * by estimated book page number or by chapter and in-page section percentage.
+ */
+@Composable
+fun JumpToPageDialog(
+    currentGlobalPage: Int,
+    totalBookPages: Int,
+    currentChapterIndex: Int,
+    totalChapters: Int,
+    currentChapterTitle: String,
+    currentSectionProgress: Float,
+    pagesPerChapter: List<Int>,
+    chapters: List<ReaderChapter>,
+    theme: ReaderTheme,
+    onDismiss: () -> Unit,
+    onJumpToBookPage: (targetPage: Int) -> Unit,
+    onJumpToChapterSection: (chapterIndex: Int, sectionFraction: Float) -> Unit
+) {
+    var selectedTab by remember { mutableStateOf(0) }
+    var inputPageText by remember { mutableStateOf(currentGlobalPage.toString()) }
+    var sliderPage by remember { mutableFloatStateOf(currentGlobalPage.toFloat()) }
+
+    var selectedChapter by remember { mutableStateOf(currentChapterIndex) }
+    var selectedSectionFraction by remember { mutableFloatStateOf(currentSectionProgress) }
+
+    val targetPage = (inputPageText.toIntOrNull() ?: sliderPage.toInt()).coerceIn(1, totalBookPages)
+
+    // Destination chapter calculation for preview
+    val destinationChapterPreview = remember(targetPage, pagesPerChapter, chapters) {
+        var acc = 0
+        var foundCh = chapters.firstOrNull()
+        for ((idx, pCount) in pagesPerChapter.withIndex()) {
+            if (targetPage <= acc + pCount || idx == pagesPerChapter.size - 1) {
+                foundCh = chapters.getOrNull(idx)
+                break
+            }
+            acc += pCount
+        }
+        foundCh
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        Icons.Default.FindInPage,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Text(
+                        text = "Jump to Page / Section",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+                }
+                IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.Default.Close, contentDescription = "Close", modifier = Modifier.size(18.dp))
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                ) {
+                    TabRow(
+                        selectedTabIndex = selectedTab,
+                        containerColor = Color.Transparent
+                    ) {
+                        Tab(
+                            selected = selectedTab == 0,
+                            onClick = { selectedTab = 0 },
+                            text = { Text("By Book Page", style = MaterialTheme.typography.labelMedium) }
+                        )
+                        Tab(
+                            selected = selectedTab == 1,
+                            onClick = { selectedTab = 1 },
+                            text = { Text("By Chapter & Section", style = MaterialTheme.typography.labelMedium) }
+                        )
+                    }
+                }
+
+                if (selectedTab == 0) {
+                    // Mode 1: Jump by Book Page
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Target Page:",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                            )
+                            Text(
+                                text = "Total: $totalBookPages pages",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        // Page Number Input with stepper
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    val newP = (targetPage - 1).coerceAtLeast(1)
+                                    inputPageText = newP.toString()
+                                    sliderPage = newP.toFloat()
+                                },
+                                modifier = Modifier.size(42.dp),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                            ) {
+                                Text("-1")
+                            }
+
+                            OutlinedTextField(
+                                value = inputPageText,
+                                onValueChange = { str ->
+                                    val filtered = str.filter { it.isDigit() }
+                                    inputPageText = filtered
+                                    filtered.toIntOrNull()?.let {
+                                        sliderPage = it.coerceIn(1, totalBookPages).toFloat()
+                                    }
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("jump_page_input"),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                textStyle = MaterialTheme.typography.titleMedium.copy(
+                                    textAlign = TextAlign.Center,
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                prefix = { Text("Page ") },
+                                suffix = { Text("/ $totalBookPages") }
+                            )
+
+                            OutlinedButton(
+                                onClick = {
+                                    val newP = (targetPage + 1).coerceAtMost(totalBookPages)
+                                    inputPageText = newP.toString()
+                                    sliderPage = newP.toFloat()
+                                },
+                                modifier = Modifier.size(42.dp),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                            ) {
+                                Text("+1")
+                            }
+                        }
+
+                        // Quick Steppers (-10, +10)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    val newP = (targetPage - 10).coerceAtLeast(1)
+                                    inputPageText = newP.toString()
+                                    sliderPage = newP.toFloat()
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("-10 Pages")
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    val newP = (targetPage + 10).coerceAtMost(totalBookPages)
+                                    inputPageText = newP.toString()
+                                    sliderPage = newP.toFloat()
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("+10 Pages")
+                            }
+                        }
+
+                        // Page Scrubbing Slider
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = "Scrub Page: $targetPage of $totalBookPages",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Slider(
+                                value = sliderPage,
+                                onValueChange = { v ->
+                                    sliderPage = v
+                                    inputPageText = v.toInt().toString()
+                                },
+                                valueRange = 1f..totalBookPages.toFloat(),
+                                steps = if (totalBookPages > 2) (totalBookPages - 2).coerceAtMost(50) else 0,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("jump_page_slider")
+                            )
+                        }
+
+                        // Quick Jump Shortcuts
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            listOf(
+                                1 to "Start (1)",
+                                (totalBookPages * 0.25).toInt().coerceAtLeast(1) to "25%",
+                                (totalBookPages * 0.50).toInt().coerceAtLeast(1) to "50%",
+                                (totalBookPages * 0.75).toInt().coerceAtLeast(1) to "75%",
+                                totalBookPages to "End ($totalBookPages)"
+                            ).forEach { (p, label) ->
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (targetPage == p) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            inputPageText = p.toString()
+                                            sliderPage = p.toFloat()
+                                        }
+                                ) {
+                                    Text(
+                                        text = label,
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = if (targetPage == p) FontWeight.Bold else FontWeight.Normal,
+                                            fontSize = 11.sp
+                                        ),
+                                        color = if (targetPage == p) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        // Destination Chapter Preview
+                        destinationChapterPreview?.let { ch ->
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.MenuBook,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Column {
+                                        Text(
+                                            text = "Lands in Chapter ${ch.index + 1}",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Text(
+                                            text = ch.title,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Mode 2: Jump by Chapter & Section
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        // Chapter Selector
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Chapter: ${selectedChapter + 1} of $totalChapters",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                                )
+                                Text(
+                                    text = chapters.getOrNull(selectedChapter)?.title ?: "",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false).padding(start = 8.dp)
+                                )
+                            }
+
+                            Slider(
+                                value = selectedChapter.toFloat(),
+                                onValueChange = { selectedChapter = it.toInt().coerceIn(0, totalChapters - 1) },
+                                valueRange = 0f..(totalChapters - 1).coerceAtLeast(1).toFloat(),
+                                steps = if (totalChapters > 2) (totalChapters - 2).coerceAtMost(50) else 0,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("jump_chapter_slider")
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                OutlinedButton(
+                                    onClick = { selectedChapter = (selectedChapter - 1).coerceAtLeast(0) },
+                                    enabled = selectedChapter > 0,
+                                    modifier = Modifier.height(36.dp)
+                                ) {
+                                    Text("Prev Chapter")
+                                }
+
+                                OutlinedButton(
+                                    onClick = { selectedChapter = (selectedChapter + 1).coerceAtMost(totalChapters - 1) },
+                                    enabled = selectedChapter < totalChapters - 1,
+                                    modifier = Modifier.height(36.dp)
+                                ) {
+                                    Text("Next Chapter")
+                                }
+                            }
+                        }
+
+                        HorizontalDivider()
+
+                        // In-Chapter Section Slider
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Section of Page/Chapter:",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                                )
+                                Text(
+                                    text = "${(selectedSectionFraction * 100).toInt()}%",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+
+                            Slider(
+                                value = selectedSectionFraction,
+                                onValueChange = { selectedSectionFraction = it },
+                                valueRange = 0f..1f,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("jump_section_slider")
+                            )
+
+                            // Quick section chips
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                listOf(
+                                    0.0f to "0% Start",
+                                    0.25f to "25%",
+                                    0.50f to "50% Mid",
+                                    0.75f to "75%",
+                                    1.0f to "100% End"
+                                ).forEach { (f, label) ->
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (kotlin.math.abs(selectedSectionFraction - f) < 0.1f) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable { selectedSectionFraction = f }
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontWeight = if (kotlin.math.abs(selectedSectionFraction - f) < 0.1f) FontWeight.Bold else FontWeight.Normal,
+                                                fontSize = 11.sp
+                                            ),
+                                            color = if (kotlin.math.abs(selectedSectionFraction - f) < 0.1f) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (selectedTab == 0) {
+                        onJumpToBookPage(targetPage)
+                    } else {
+                        onJumpToChapterSection(selectedChapter, selectedSectionFraction)
+                    }
+                },
+                modifier = Modifier.testTag("jump_page_confirm_btn")
+            ) {
+                Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(if (selectedTab == 0) "Jump to Page $targetPage" else "Jump to Section")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }

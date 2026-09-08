@@ -2,6 +2,7 @@ package com.example.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,7 @@ import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.FormatQuote
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -64,6 +66,8 @@ fun EpubTextRenderer(
     bookTitle: String,
     totalChapters: Int,
     searchQuery: String = "",
+    activeTtsParagraphIndex: Int? = null,
+    onPlayFromParagraph: ((paragraphIndex: Int) -> Unit)? = null,
     modifier: Modifier = Modifier,
     onNextChapter: (() -> Unit)? = null,
     onNavigateToLibrary: (() -> Unit)? = null
@@ -176,168 +180,210 @@ fun EpubTextRenderer(
             chapter.paragraphs.forEachIndexed { index, rawBlock ->
                 val block = rawBlock.trim()
                 if (block.isNotBlank()) {
-                    when {
-                        // Subheading
-                        block.startsWith("### ") -> {
-                            val headingText = block.removePrefix("### ").trim()
-                            Text(
-                                text = headingText,
-                                style = MaterialTheme.typography.titleLarge.copy(
-                                    fontFamily = composeFontFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = (settings.fontSizeSp * 1.15f).sp
-                                ),
-                                color = accentColor,
-                                modifier = Modifier.padding(top = 18.dp, bottom = 8.dp)
-                            )
-                        }
+                    val isSpeakingThis = activeTtsParagraphIndex == index
 
-                        // Blockquote
-                        block.startsWith("❝ ") -> {
-                            val quoteText = block.removePrefix("❝ ").trim()
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 10.dp),
-                                shape = RoundedCornerShape(8.dp),
-                                colors = CardDefaults.cardColors(containerColor = accentColor.copy(alpha = 0.08f)),
-                                border = androidx.compose.foundation.BorderStroke(
-                                    width = 1.dp,
-                                    color = accentColor.copy(alpha = 0.25f)
-                                )
-                            ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = if (isSpeakingThis) 4.dp else 0.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .then(
+                                if (isSpeakingThis) {
+                                    Modifier
+                                        .background(accentColor.copy(alpha = 0.12f))
+                                        .border(1.5.dp, accentColor.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                                        .padding(horizontal = 10.dp, vertical = 8.dp)
+                                } else {
+                                    Modifier
+                                }
+                            )
+                            .testTag("paragraph_block_$index")
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            if (isSpeakingThis) {
                                 Row(
-                                    modifier = Modifier.padding(14.dp),
-                                    verticalAlignment = Alignment.Top,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.padding(bottom = 6.dp)
                                 ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .width(3.dp)
-                                            .height(28.dp)
-                                            .background(accentColor, shape = RoundedCornerShape(2.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.VolumeUp,
+                                        contentDescription = "Speaking paragraph",
+                                        tint = accentColor,
+                                        modifier = Modifier.size(16.dp)
                                     )
-                                    Column {
-                                        Icon(
-                                            imageVector = Icons.Default.FormatQuote,
-                                            contentDescription = null,
-                                            tint = accentColor,
-                                            modifier = Modifier.size(18.dp)
+                                    Text(
+                                        text = "Reading Aloud • Para ${index + 1}",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                        color = accentColor
+                                    )
+                                }
+                            }
+
+                            when {
+                                // Subheading
+                                block.startsWith("### ") -> {
+                                    val headingText = block.removePrefix("### ").trim()
+                                    Text(
+                                        text = headingText,
+                                        style = MaterialTheme.typography.titleLarge.copy(
+                                            fontFamily = composeFontFamily,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = (settings.fontSizeSp * 1.15f).sp
+                                        ),
+                                        color = accentColor,
+                                        modifier = Modifier.padding(top = 18.dp, bottom = 8.dp)
+                                    )
+                                }
+
+                                // Blockquote
+                                block.startsWith("❝ ") -> {
+                                    val quoteText = block.removePrefix("❝ ").trim()
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 10.dp),
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = CardDefaults.cardColors(containerColor = accentColor.copy(alpha = 0.08f)),
+                                        border = androidx.compose.foundation.BorderStroke(
+                                            width = 1.dp,
+                                            color = accentColor.copy(alpha = 0.25f)
+                                        )
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(14.dp),
+                                            verticalAlignment = Alignment.Top,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .width(3.dp)
+                                                    .height(28.dp)
+                                                    .background(accentColor, shape = RoundedCornerShape(2.dp))
+                                            )
+                                            Column {
+                                                Icon(
+                                                    imageVector = Icons.Default.FormatQuote,
+                                                    contentDescription = null,
+                                                    tint = accentColor,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                                Text(
+                                                    text = quoteText,
+                                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                                        fontFamily = composeFontFamily,
+                                                        fontSize = settings.fontSizeSp.sp,
+                                                        fontStyle = FontStyle.Italic,
+                                                        lineHeight = (settings.fontSizeSp * settings.lineSpacingMultiplier).sp
+                                                    ),
+                                                    color = textColor.copy(alpha = 0.9f),
+                                                    textAlign = textAlign
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Bullet point
+                                block.startsWith("• ") -> {
+                                    val itemText = block.removePrefix("• ").trim()
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 4.dp, horizontal = 8.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Text(
+                                            text = "•",
+                                            style = MaterialTheme.typography.bodyLarge.copy(
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = (settings.fontSizeSp * 1.1f).sp
+                                            ),
+                                            color = accentColor
                                         )
                                         Text(
-                                            text = quoteText,
+                                            text = itemText,
                                             style = MaterialTheme.typography.bodyLarge.copy(
                                                 fontFamily = composeFontFamily,
                                                 fontSize = settings.fontSizeSp.sp,
-                                                fontStyle = FontStyle.Italic,
                                                 lineHeight = (settings.fontSizeSp * settings.lineSpacingMultiplier).sp
                                             ),
-                                            color = textColor.copy(alpha = 0.9f),
-                                            textAlign = textAlign
+                                            color = textColor,
+                                            textAlign = textAlign,
+                                            modifier = Modifier.weight(1f)
                                         )
                                     }
                                 }
-                            }
-                        }
 
-                        // Bullet point
-                        block.startsWith("• ") -> {
-                            val itemText = block.removePrefix("• ").trim()
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp, horizontal = 8.dp),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Text(
-                                    text = "•",
-                                    style = MaterialTheme.typography.bodyLarge.copy(
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = (settings.fontSizeSp * 1.1f).sp
-                                    ),
-                                    color = accentColor
-                                )
-                                Text(
-                                    text = itemText,
-                                    style = MaterialTheme.typography.bodyLarge.copy(
-                                        fontFamily = composeFontFamily,
-                                        fontSize = settings.fontSizeSp.sp,
-                                        lineHeight = (settings.fontSizeSp * settings.lineSpacingMultiplier).sp
-                                    ),
-                                    color = textColor,
-                                    textAlign = textAlign,
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
-
-                        // Normal body paragraph (with drop-cap on first paragraph)
-                        else -> {
-                            if (searchQuery.isNotBlank() && block.contains(searchQuery, ignoreCase = true)) {
-                                val highlighted = highlightSearchText(
-                                    text = block,
-                                    query = searchQuery,
-                                    highlightBgColor = highlightBgColor,
-                                    highlightTextColor = highlightTextColor
-                                )
-                                Text(
-                                    text = highlighted,
-                                    style = MaterialTheme.typography.bodyLarge.copy(
-                                        fontFamily = composeFontFamily,
-                                        fontSize = settings.fontSizeSp.sp,
-                                        lineHeight = (settings.fontSizeSp * settings.lineSpacingMultiplier).sp
-                                    ),
-                                    color = textColor,
-                                    textAlign = textAlign,
-                                    modifier = Modifier.padding(bottom = 14.dp)
-                                )
-                            } else if (index == 0 && block.length > 20) {
-                                // Drop cap for the very first letter of the chapter
-                                val firstLetter = block.take(1)
-                                val restOfParagraph = block.drop(1)
-
-                                val annotatedString = buildAnnotatedString {
-                                    withStyle(
-                                        style = SpanStyle(
-                                            fontFamily = composeFontFamily,
-                                            fontSize = (settings.fontSizeSp * 1.55f).sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = accentColor
+                                // Normal body paragraph (with drop-cap on first paragraph)
+                                else -> {
+                                    if (searchQuery.isNotBlank() && block.contains(searchQuery, ignoreCase = true)) {
+                                        val highlighted = highlightSearchText(
+                                            text = block,
+                                            query = searchQuery,
+                                            highlightBgColor = highlightBgColor,
+                                            highlightTextColor = highlightTextColor
                                         )
-                                    ) {
-                                        append(firstLetter)
-                                    }
-                                    withStyle(
-                                        style = SpanStyle(
-                                            fontFamily = composeFontFamily,
-                                            fontSize = settings.fontSizeSp.sp,
-                                            color = textColor
+                                        Text(
+                                            text = highlighted,
+                                            style = MaterialTheme.typography.bodyLarge.copy(
+                                                fontFamily = composeFontFamily,
+                                                fontSize = settings.fontSizeSp.sp,
+                                                lineHeight = (settings.fontSizeSp * settings.lineSpacingMultiplier).sp
+                                            ),
+                                            color = textColor,
+                                            textAlign = textAlign,
+                                            modifier = Modifier.padding(bottom = if (isSpeakingThis) 4.dp else 14.dp)
                                         )
-                                    ) {
-                                        append(restOfParagraph)
+                                    } else if (index == 0 && block.length > 20) {
+                                        // Drop cap for the very first letter of the chapter
+                                        val firstLetter = block.take(1)
+                                        val restOfParagraph = block.drop(1)
+
+                                        val annotatedString = buildAnnotatedString {
+                                            withStyle(
+                                                style = SpanStyle(
+                                                    fontFamily = composeFontFamily,
+                                                    fontSize = (settings.fontSizeSp * 1.55f).sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = accentColor
+                                                )
+                                            ) {
+                                                append(firstLetter)
+                                            }
+                                            withStyle(
+                                                style = SpanStyle(
+                                                    fontFamily = composeFontFamily,
+                                                    fontSize = settings.fontSizeSp.sp,
+                                                    color = textColor
+                                                )
+                                            ) {
+                                                append(restOfParagraph)
+                                            }
+                                        }
+
+                                        Text(
+                                            text = annotatedString,
+                                            style = MaterialTheme.typography.bodyLarge.copy(
+                                                lineHeight = (settings.fontSizeSp * settings.lineSpacingMultiplier).sp
+                                            ),
+                                            textAlign = textAlign,
+                                            modifier = Modifier.padding(bottom = if (isSpeakingThis) 4.dp else 14.dp)
+                                        )
+                                    } else {
+                                        Text(
+                                            text = block,
+                                            style = MaterialTheme.typography.bodyLarge.copy(
+                                                fontFamily = composeFontFamily,
+                                                fontSize = settings.fontSizeSp.sp,
+                                                lineHeight = (settings.fontSizeSp * settings.lineSpacingMultiplier).sp
+                                            ),
+                                            color = textColor,
+                                            textAlign = textAlign,
+                                            modifier = Modifier.padding(bottom = if (isSpeakingThis) 4.dp else 14.dp)
+                                        )
                                     }
                                 }
-
-                                Text(
-                                    text = annotatedString,
-                                    style = MaterialTheme.typography.bodyLarge.copy(
-                                        lineHeight = (settings.fontSizeSp * settings.lineSpacingMultiplier).sp
-                                    ),
-                                    textAlign = textAlign,
-                                    modifier = Modifier.padding(bottom = 14.dp)
-                                )
-                            } else {
-                                Text(
-                                    text = block,
-                                    style = MaterialTheme.typography.bodyLarge.copy(
-                                        fontFamily = composeFontFamily,
-                                        fontSize = settings.fontSizeSp.sp,
-                                        lineHeight = (settings.fontSizeSp * settings.lineSpacingMultiplier).sp
-                                    ),
-                                    color = textColor,
-                                    textAlign = textAlign,
-                                    modifier = Modifier.padding(bottom = 14.dp)
-                                )
                             }
                         }
                     }
