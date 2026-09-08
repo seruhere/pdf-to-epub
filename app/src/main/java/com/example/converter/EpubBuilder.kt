@@ -15,7 +15,11 @@ class EpubBuilder {
         author: String,
         chapters: List<ConvertedChapter>,
         coverImageFile: File?,
-        typography: TypographyPreset = TypographyPreset.CLEAN_MODERN
+        typography: TypographyPreset = TypographyPreset.CLEAN_MODERN,
+        fontFamily: EpubFontFamily = EpubFontFamily.SANS_SERIF,
+        fontSizePt: Int = ConversionOptions.DEFAULT_FONT_SIZE_PT,
+        marginHorizontalPercent: Int = 5,
+        marginVerticalPercent: Int = 4
     ): Boolean {
         val zipOut = ZipOutputStream(FileOutputStream(outputFile))
         try {
@@ -51,13 +55,14 @@ class EpubBuilder {
 
             // 3. Write OEBPS/styles.css
             zipOut.putNextEntry(ZipEntry("OEBPS/styles.css"))
+            val selectedFontCss = fontFamily.fontCss
             val css = """
 @charset "utf-8";
 body {
-    ${typography.fontCss}
-    font-size: 1.05em;
+    $selectedFontCss
+    font-size: ${fontSizePt}pt;
     line-height: 1.65;
-    margin: 4% 5%;
+    margin: ${marginVerticalPercent}% ${marginHorizontalPercent}%;
     color: #212121;
     background-color: #FFFFFF;
 }

@@ -141,11 +141,16 @@ class PdfToEpubConverter(private val context: Context) {
                         stage = ConversionStage.RENDERING_COVER,
                         currentPage = 0,
                         totalPages = pagesToConvert,
-                        message = "Rendering book cover art...",
+                        message = "Rendering book cover art (${options.imageCompression.displayName})...",
                         percentage = 0.15f
                     )
                 )
-                coverFile = renderCoverImage(tempPdfFile, startPage - 1)
+                coverFile = renderCoverImage(
+                    tempPdfFile,
+                    startPage - 1,
+                    options.imageCompression,
+                    options.customImageQuality
+                )
             }
 
             coroutineContext.ensureActive()
@@ -281,7 +286,11 @@ class PdfToEpubConverter(private val context: Context) {
                 author = options.author.ifBlank { "Unknown Author" },
                 chapters = chapters,
                 coverImageFile = coverFile,
-                typography = options.typography
+                typography = options.typography,
+                fontFamily = options.fontFamily,
+                fontSizePt = options.fontSizePt,
+                marginHorizontalPercent = options.effectiveHorizontalMargin,
+                marginVerticalPercent = options.effectiveVerticalMargin
             )
 
             onProgress(
@@ -390,7 +399,12 @@ class PdfToEpubConverter(private val context: Context) {
             .replace("'", "&#39;")
     }
 
-    private fun renderCoverImage(pdfFile: File, pageIndex: Int): File? {
+    private fun renderCoverImage(
+        pdfFile: File,
+        pageIndex: Int,
+        compressionLevel: ImageCompressionLevel = ImageCompressionLevel.BALANCED,
+        customQuality: Int? = null
+    ): File? {
         var pfd: ParcelFileDescriptor? = null
         var renderer: PdfRenderer? = null
         var page: PdfRenderer.Page? = null
@@ -402,19 +416,23 @@ class PdfToEpubConverter(private val context: Context) {
             val targetIndex = pageIndex.coerceIn(0, renderer.pageCount - 1)
             page = renderer.openPage(targetIndex)
 
-            // High resolution render (2x standard DPI for crisp reading display)
-            val renderWidth = (page.width * 2).coerceAtMost(1600)
-            val renderHeight = (page.height * 2).coerceAtMost(2400)
+            // Scaled render based on compression level max dimension
+            val maxDim = compressionLevel.maxDimension
+            val maxPageDim = maxOf(page.width, page.height).coerceAtLeast(1)
+            val scale = minOf(2.0f, maxDim.toFloat() / maxPageDim).coerceIn(0.5f, 2.5f)
+            val renderWidth = (page.width * scale).toInt().coerceIn(320, maxDim)
+            val renderHeight = (page.height * scale).toInt().coerceIn(320, maxDim)
 
             val bitmap = Bitmap.createBitmap(renderWidth, renderHeight, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bitmap)
             canvas.drawColor(Color.WHITE)
             page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
 
+            val quality = (customQuality ?: compressionLevel.qualityPercent).coerceIn(20, 100)
             val coversDir = File(context.filesDir, "covers").apply { mkdirs() }
             val coverFile = File(coversDir, "cover_${System.currentTimeMillis()}.jpg")
             FileOutputStream(coverFile).use { out ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+                bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
             }
             bitmap.recycle()
             coverFile

@@ -174,6 +174,17 @@ class ConverterViewModel(application: Application) : AndroidViewModel(applicatio
         _conversionOptions.value = updater(_conversionOptions.value)
     }
 
+    fun resetConversionSettingsToDefaults() {
+        _conversionOptions.value = _conversionOptions.value.copy(
+            fontFamily = ConversionOptions.DEFAULT_FONT_FAMILY,
+            fontSizePt = ConversionOptions.DEFAULT_FONT_SIZE_PT,
+            margin = ConversionOptions.DEFAULT_MARGIN,
+            customMarginPercent = null,
+            imageCompression = ConversionOptions.DEFAULT_IMAGE_COMPRESSION,
+            customImageQuality = null
+        )
+    }
+
     fun startConversion() {
         val uri = _selectedPdfUri.value ?: return
         val options = _conversionOptions.value

@@ -8,6 +8,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,18 +30,26 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.FilterDrama
 import androidx.compose.material.icons.filled.FormatPaint
+import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Preview
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Button
@@ -57,9 +66,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -71,6 +82,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -78,7 +90,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.converter.ChapterSplitMode
+import com.example.converter.ConversionOptions
 import com.example.converter.ConversionStage
+import com.example.converter.EpubFontFamily
+import com.example.converter.EpubMargin
+import com.example.converter.ImageCompressionLevel
 import com.example.converter.TypographyPreset
 import com.example.ui.components.ConversionProgressDialog
 import com.example.ui.components.ConversionSuccessDialog
@@ -354,7 +370,9 @@ fun ConverterScreen(
 
             // Options Configuration
             Card(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("conversion_settings_card"),
                 shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
             ) {
@@ -364,15 +382,45 @@ fun ConverterScreen(
                         .padding(18.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
+                    // Header with Reset Defaults action
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Text(
-                            text = "EPUB Customization",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Default.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Text(
+                                text = "Conversion Settings",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                            )
+                        }
+
+                        if (options.isCustomized) {
+                            TextButton(
+                                onClick = { viewModel.resetConversionSettingsToDefaults() },
+                                modifier = Modifier.testTag("reset_defaults_button")
+                            ) {
+                                Icon(Icons.Default.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Reset Defaults", style = MaterialTheme.typography.labelMedium)
+                            }
+                        } else {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                            ) {
+                                Text(
+                                    text = "Default Settings",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
                     }
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
@@ -439,6 +487,320 @@ fun ConverterScreen(
                         )
                     }
 
+                    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+
+                    // Live Typography & Layout Preview Card
+                    TypographyPreviewCard(options = options)
+
+                    // 1. Font Family
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(Icons.Default.TextFields, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                            Text(
+                                text = "Font Family",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                            )
+                            Spacer(modifier = Modifier.weight(1f))
+                            Text(
+                                text = options.fontFamily.displayName + if (options.fontFamily == ConversionOptions.DEFAULT_FONT_FAMILY) " (Default)" else "",
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            EpubFontFamily.values().forEach { family ->
+                                FilterChip(
+                                    selected = options.fontFamily == family,
+                                    onClick = {
+                                        viewModel.updateConversionOptions { it.copy(fontFamily = family) }
+                                    },
+                                    label = {
+                                        Text(family.displayName)
+                                    },
+                                    leadingIcon = if (options.fontFamily == family) {
+                                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                                    } else null,
+                                    modifier = Modifier.testTag("font_family_${family.name}")
+                                )
+                            }
+                        }
+                        Text(
+                            text = "Category: ${options.fontFamily.fontCategory} • Embedded into EPUB styles",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+
+                    // 2. Font Size
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(Icons.Default.FormatSize, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                                Text(
+                                    text = "Font Size",
+                                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                                )
+                            }
+                            Text(
+                                text = "${options.fontSizePt} pt" + if (options.fontSizePt == ConversionOptions.DEFAULT_FONT_SIZE_PT) " (Default)" else "",
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        // Stepper buttons & Slider
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            IconButton(
+                                onClick = {
+                                    val newSize = (options.fontSizePt - 1).coerceAtLeast(ConversionOptions.MIN_FONT_SIZE_PT)
+                                    viewModel.updateConversionOptions { it.copy(fontSizePt = newSize) }
+                                },
+                                enabled = options.fontSizePt > ConversionOptions.MIN_FONT_SIZE_PT,
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .testTag("decrease_font_size_button")
+                            ) {
+                                Icon(Icons.Default.Remove, contentDescription = "Decrease font size")
+                            }
+
+                            Slider(
+                                value = options.fontSizePt.toFloat(),
+                                onValueChange = { value ->
+                                    viewModel.updateConversionOptions { it.copy(fontSizePt = value.toInt()) }
+                                },
+                                valueRange = ConversionOptions.MIN_FONT_SIZE_PT.toFloat()..ConversionOptions.MAX_FONT_SIZE_PT.toFloat(),
+                                steps = (ConversionOptions.MAX_FONT_SIZE_PT - ConversionOptions.MIN_FONT_SIZE_PT) - 1,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("font_size_slider")
+                            )
+
+                            IconButton(
+                                onClick = {
+                                    val newSize = (options.fontSizePt + 1).coerceAtMost(ConversionOptions.MAX_FONT_SIZE_PT)
+                                    viewModel.updateConversionOptions { it.copy(fontSizePt = newSize) }
+                                },
+                                enabled = options.fontSizePt < ConversionOptions.MAX_FONT_SIZE_PT,
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .testTag("increase_font_size_button")
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = "Increase font size")
+                            }
+                        }
+
+                        // Quick presets
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf(12, 14, 16, 18, 20, 24).forEach { size ->
+                                FilterChip(
+                                    selected = options.fontSizePt == size,
+                                    onClick = {
+                                        viewModel.updateConversionOptions { it.copy(fontSizePt = size) }
+                                    },
+                                    label = { Text("${size}pt") },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("font_size_preset_$size")
+                                )
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+
+                    // 3. Page Margins
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(Icons.Default.AspectRatio, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                                Text(
+                                    text = "Page Margins",
+                                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                                )
+                            }
+                            Text(
+                                text = "${options.effectiveHorizontalMargin}% sides • ${options.effectiveVerticalMargin}% top/bottom",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        // Preset chips
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            EpubMargin.values().forEach { marginPreset ->
+                                val isSelected = options.margin == marginPreset && options.customMarginPercent == null
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = {
+                                        viewModel.updateConversionOptions {
+                                            it.copy(margin = marginPreset, customMarginPercent = null)
+                                        }
+                                    },
+                                    label = { Text(marginPreset.displayName) },
+                                    leadingIcon = if (isSelected) {
+                                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                                    } else null,
+                                    modifier = Modifier.testTag("margin_preset_${marginPreset.name}")
+                                )
+                            }
+                        }
+
+                        // Custom margin slider
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Adjust:",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Slider(
+                                value = options.effectiveHorizontalMargin.toFloat(),
+                                onValueChange = { value ->
+                                    val rounded = value.toInt()
+                                    viewModel.updateConversionOptions { it.copy(customMarginPercent = rounded) }
+                                },
+                                valueRange = ConversionOptions.MIN_MARGIN_PERCENT.toFloat()..ConversionOptions.MAX_MARGIN_PERCENT.toFloat(),
+                                steps = (ConversionOptions.MAX_MARGIN_PERCENT - ConversionOptions.MIN_MARGIN_PERCENT) - 1,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("margin_slider")
+                            )
+                            Text(
+                                text = "${options.effectiveHorizontalMargin}%",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                modifier = Modifier.width(36.dp)
+                            )
+                        }
+
+                        Text(
+                            text = options.margin.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+
+                    // 4. Image Compression Level
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(Icons.Default.Compress, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                                Text(
+                                    text = "Image Compression Level",
+                                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold)
+                                )
+                            }
+                            Text(
+                                text = "${options.imageCompression.displayName} (${options.effectiveImageQuality}%)",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            ImageCompressionLevel.values().forEach { compLevel ->
+                                val isSelected = options.imageCompression == compLevel && options.customImageQuality == null
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = {
+                                        viewModel.updateConversionOptions {
+                                            it.copy(imageCompression = compLevel, customImageQuality = null)
+                                        }
+                                    },
+                                    label = { Text(compLevel.displayName) },
+                                    leadingIcon = if (isSelected) {
+                                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                                    } else null,
+                                    modifier = Modifier.testTag("compression_level_${compLevel.name}")
+                                )
+                            }
+                        }
+
+                        // Fine-tune image quality slider
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Quality:",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Slider(
+                                value = options.effectiveImageQuality.toFloat(),
+                                onValueChange = { value ->
+                                    viewModel.updateConversionOptions { it.copy(customImageQuality = value.toInt()) }
+                                },
+                                valueRange = ConversionOptions.MIN_IMAGE_QUALITY.toFloat()..ConversionOptions.MAX_IMAGE_QUALITY.toFloat(),
+                                steps = 13,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("image_quality_slider")
+                            )
+                            Text(
+                                text = "${options.effectiveImageQuality}%",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                modifier = Modifier.width(42.dp)
+                            )
+                        }
+
+                        Text(
+                            text = options.imageCompression.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+
                     // Cover Generation Switch
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -469,28 +831,6 @@ fun ConverterScreen(
                             },
                             modifier = Modifier.testTag("extract_cover_switch")
                         )
-                    }
-
-                    // Typography Presets
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(
-                            text = "Typography Preset for EPUB Reader",
-                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold)
-                        )
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            TypographyPreset.values().forEach { typo ->
-                                FilterChip(
-                                    selected = options.typography == typo,
-                                    onClick = {
-                                        viewModel.updateConversionOptions { it.copy(typography = typo) }
-                                    },
-                                    label = { Text(typo.displayName) },
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
                     }
 
                     // Clean Headers & Footers
@@ -588,6 +928,99 @@ fun FeatureMiniCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1
             )
+        }
+    }
+}
+
+@Composable
+fun TypographyPreviewCard(
+    options: ConversionOptions,
+    modifier: Modifier = Modifier
+) {
+    val previewComposeFont = when (options.fontFamily) {
+        EpubFontFamily.SANS_SERIF -> FontFamily.SansSerif
+        EpubFontFamily.SERIF -> FontFamily.Serif
+        EpubFontFamily.LITERARY_GEORGIA -> FontFamily.Serif
+        EpubFontFamily.MONOSPACE -> FontFamily.Monospace
+        EpubFontFamily.HIGH_LEGIBILITY -> FontFamily.Default
+    }
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("typography_live_preview_card"),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Preview,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = "Live Reader Preview",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                Text(
+                    text = "${options.fontFamily.displayName} • ${options.fontSizePt}pt",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            // Simulated ebook page layout
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                color = Color.White,
+                shadowElevation = 1.dp
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            horizontal = (options.effectiveHorizontalMargin * 2.2).coerceIn(8.0, 36.0).dp,
+                            vertical = (options.effectiveVerticalMargin * 2.0).coerceIn(8.0, 24.0).dp
+                        )
+                ) {
+                    Text(
+                        text = "Chapter 1: The Beginning",
+                        fontFamily = previewComposeFont,
+                        fontSize = (options.fontSizePt * 1.15f).sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF1A237E),
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+                    Text(
+                        text = "The quick brown fox jumps over the lazy dog. Every chapter in your converted EPUB will be rendered with this exact typeface, scaling, and comfortable page margins.",
+                        fontFamily = previewComposeFont,
+                        fontSize = (options.fontSizePt * 0.9f).coerceIn(11f, 22f).sp,
+                        lineHeight = ((options.fontSizePt * 0.9f) * 1.55f).sp,
+                        color = Color(0xFF212121),
+                        textAlign = TextAlign.Justify
+                    )
+                }
+            }
         }
     }
 }
