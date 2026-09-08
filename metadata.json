@@ -1,0 +1,6 @@
+{
+  "name": "PDF to EPUB Converter",
+  "description": "Convert PDF documents to EPUB format without limits. Features smart chapter detection, metadata customization, book library, and built-in reader.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

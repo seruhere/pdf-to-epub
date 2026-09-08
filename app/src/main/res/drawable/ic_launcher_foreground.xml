@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Open Book Base Layer (Safe Zone 21 to 87) -->
+    <!-- Left Book Page -->
+    <path
+        android:fillColor="#E0F7FA"
+        android:pathData="M54,42 C45,39 34,40 25,44 L25,75 C34,71 45,70 54,73 Z" />
+        
+    <!-- Right Book Page -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,42 C63,39 74,40 83,44 L83,75 C74,71 63,70 54,73 Z" />
+        
+    <!-- Spine Center Shadow -->
+    <path
+        android:strokeColor="#80B0FF"
+        android:strokeWidth="1.8"
+        android:pathData="M54,42 L54,73" />
+
+    <!-- Page Content Lines on Left Page (Simulating text lines) -->
+    <path
+        android:strokeColor="#80DEEA"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:pathData="M30,49 L49,47 M30,55 L49,53 M30,61 L45,59 M30,67 L42,65" />
+
+    <!-- Page Content Lines on Right Page -->
+    <path
+        android:strokeColor="#90CAF9"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:pathData="M59,47 L78,49 M59,53 L78,55 M59,59 L74,61 M59,65 L70,67" />
+
+    <!-- Upper Conversion Badge: "PDF" pill on top left -->
+    <path
+        android:fillColor="#FF5252"
+        android:pathData="M26,29 H42 A4,4 0 0 1 46,33 V37 A4,4 0 0 1 42,41 H26 A4,4 0 0 1 22,37 V33 A4,4 0 0 1 26,29 Z" />
+    <!-- PDF badge dots/decor -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:pathData="M27,35 H41" />
+
+    <!-- Upper Conversion Badge: "EPUB" pill on top right -->
+    <path
+        android:fillColor="#00E676"
+        android:pathData="M66,29 H82 A4,4 0 0 1 86,33 V37 A4,4 0 0 1 82,41 H66 A4,4 0 0 1 62,37 V33 A4,4 0 0 1 66,29 Z" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:pathData="M67,35 H81" />
+
+    <!-- Dynamic Curved Transfer Arrow linking PDF to EPUB -->
+    <path
+        android:strokeColor="#FFD54F"
+        android:strokeWidth="2.4"
+        android:strokeLineCap="round"
+        android:pathData="M48,34 Q54,29 60,34" />
+    <!-- Arrowhead -->
+    <path
+        android:fillColor="#FFD54F"
+        android:pathData="M59,32 L63,35 L59,38 Z" />
+
+    <!-- Sparkle / Modern star accent (bottom right of book) -->
+    <path
+        android:fillColor="#FFEB3B"
+        android:pathData="M78,75 L80,71 L82,75 L86,77 L82,79 L80,83 L78,79 L74,77 Z" />
+</vector>
