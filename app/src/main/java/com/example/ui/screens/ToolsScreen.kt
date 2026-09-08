@@ -26,13 +26,18 @@ import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.FolderZip
+import androidx.compose.material.icons.filled.BrightnessAuto
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material3.FilterChip
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Queue
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -117,6 +122,115 @@ fun ToolsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+        }
+
+        // App Theme & Dark Mode Options Card
+        val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("theme_mode_options_card"),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primaryContainer),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Palette,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = "Display & Dark Mode",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Text(
+                            text = "Choose your preferred app appearance",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // System Option
+                    FilterChip(
+                        selected = themeMode == com.example.reader.ThemeMode.SYSTEM,
+                        onClick = { viewModel.setThemeMode(com.example.reader.ThemeMode.SYSTEM) },
+                        leadingIcon = {
+                            Icon(Icons.Default.BrightnessAuto, contentDescription = null, modifier = Modifier.size(16.dp))
+                        },
+                        label = { Text("System") },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("theme_chip_system")
+                    )
+
+                    // Light Option
+                    FilterChip(
+                        selected = themeMode == com.example.reader.ThemeMode.LIGHT,
+                        onClick = { viewModel.setThemeMode(com.example.reader.ThemeMode.LIGHT) },
+                        leadingIcon = {
+                            Icon(Icons.Default.LightMode, contentDescription = null, modifier = Modifier.size(16.dp))
+                        },
+                        label = { Text("Light") },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("theme_chip_light")
+                    )
+
+                    // Dark Option
+                    FilterChip(
+                        selected = themeMode == com.example.reader.ThemeMode.DARK,
+                        onClick = { viewModel.setThemeMode(com.example.reader.ThemeMode.DARK) },
+                        leadingIcon = {
+                            Icon(Icons.Default.DarkMode, contentDescription = null, modifier = Modifier.size(16.dp))
+                        },
+                        label = { Text("Dark") },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("theme_chip_dark")
+                    )
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = when (themeMode) {
+                            com.example.reader.ThemeMode.SYSTEM -> "Currently matching device system theme."
+                            com.example.reader.ThemeMode.LIGHT -> "Always using bright, high-contrast light theme."
+                            com.example.reader.ThemeMode.DARK -> "Always using deep charcoal dark theme with teal accents."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                    )
+                }
             }
         }
 
@@ -219,24 +333,60 @@ fun ToolsScreen(
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
-                                        Text(
-                                            text = item.status + if (item.error != null) ": ${item.error}" else "",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = when (item.status) {
-                                                "Success" -> GreenSuccess
-                                                "Failed" -> RedError
-                                                "Converting" -> MaterialTheme.colorScheme.primary
-                                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            if (item.fileSizeBytes > 0L) {
+                                                Text(
+                                                    text = formatBytes(item.fileSizeBytes),
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Text(
+                                                    text = "•",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
                                             }
-                                        )
+                                            Text(
+                                                text = item.status + if (item.error != null) ": ${item.error}" else "",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = when (item.status) {
+                                                    "Success" -> GreenSuccess
+                                                    "Failed" -> RedError
+                                                    "Converting" -> MaterialTheme.colorScheme.primary
+                                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                                }
+                                            )
+                                        }
                                     }
 
-                                    if (item.status == "Converting") {
-                                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                                    } else if (item.status == "Success") {
-                                        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = GreenSuccess, modifier = Modifier.size(20.dp))
-                                    } else if (item.status == "Failed") {
-                                        Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = RedError, modifier = Modifier.size(20.dp))
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        if (item.status == "Converting") {
+                                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                        } else if (item.status == "Success") {
+                                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = GreenSuccess, modifier = Modifier.size(20.dp))
+                                        } else if (item.status == "Failed") {
+                                            Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = RedError, modifier = Modifier.size(20.dp))
+                                        }
+
+                                        if (item.status != "Converting" && !isBatchRunning) {
+                                            IconButton(
+                                                onClick = { viewModel.removeBatchItem(item) },
+                                                modifier = Modifier.size(28.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Close,
+                                                    contentDescription = "Remove file",
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -255,17 +405,29 @@ fun ToolsScreen(
                             Text("Add More")
                         }
 
-                        Button(
-                            onClick = { viewModel.startBatchConversion() },
-                            enabled = !isBatchRunning && batchQueue.any { it.status == "Pending" },
-                            modifier = Modifier
-                                .weight(1.5f)
-                                .testTag("start_batch_button"),
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                        ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(if (isBatchRunning) "Converting..." else "Start Batch")
+                        if (isBatchRunning) {
+                            OutlinedButton(
+                                onClick = { viewModel.cancelBatchConversion() },
+                                modifier = Modifier.weight(1.5f),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                            ) {
+                                Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Cancel Batch")
+                            }
+                        } else {
+                            Button(
+                                onClick = { viewModel.startBatchConversion() },
+                                enabled = batchQueue.any { it.status == "Pending" },
+                                modifier = Modifier
+                                    .weight(1.5f)
+                                    .testTag("start_batch_button"),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                            ) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Start Batch")
+                            }
                         }
                     }
                 }

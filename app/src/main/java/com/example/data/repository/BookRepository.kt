@@ -47,4 +47,8 @@ class BookRepository(private val bookDao: BookDao) {
     suspend fun toggleFavorite(bookId: Long, isFavorite: Boolean) = withContext(Dispatchers.IO) {
         bookDao.toggleFavorite(bookId, isFavorite)
     }
+
+    suspend fun updateBook(book: ConvertedBook) = withContext(Dispatchers.IO) {
+        bookDao.updateBook(book)
+    }
 }

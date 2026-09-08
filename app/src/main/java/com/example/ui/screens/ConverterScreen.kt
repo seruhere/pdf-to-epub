@@ -36,19 +36,27 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Compress
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.FilterDrama
 import androidx.compose.material.icons.filled.FormatPaint
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Preview
+import androidx.compose.material.icons.filled.Queue
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.UploadFile
@@ -63,6 +71,7 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -100,8 +109,11 @@ import com.example.ui.components.ConversionProgressDialog
 import com.example.ui.components.ConversionSuccessDialog
 import com.example.ui.components.UnlimitedBadge
 import com.example.ui.components.formatBytes
+import com.example.ui.theme.GreenSuccess
 import com.example.ui.theme.IndigoPrimary
+import com.example.ui.theme.RedError
 import com.example.ui.theme.TealAccent
+import com.example.ui.viewmodel.BatchItem
 import com.example.ui.viewmodel.ConverterViewModel
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -110,6 +122,7 @@ fun ConverterScreen(
     viewModel: ConverterViewModel,
     onNavigateToReader: () -> Unit,
     onShareEpub: (String, String) -> Unit,
+    onNavigateToLibrary: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val selectedUri by viewModel.selectedPdfUri.collectAsStateWithLifecycle()
@@ -120,10 +133,25 @@ fun ConverterScreen(
     val progress by viewModel.conversionProgress.collectAsStateWithLifecycle()
     val lastConvertedBook by viewModel.lastConvertedBook.collectAsStateWithLifecycle()
 
-    val filePickerLauncher = rememberLauncherForActivityResult(
+    val batchQueue by viewModel.batchQueue.collectAsStateWithLifecycle()
+    val isBatchRunning by viewModel.isBatchRunning.collectAsStateWithLifecycle()
+    val batchCurrentIndex by viewModel.batchCurrentIndex.collectAsStateWithLifecycle()
+
+    var isMultiSelectMode by remember { mutableStateOf(false) }
+
+    val singleFilePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let { viewModel.onPdfSelected(it) }
+    }
+
+    val multiFilePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetMultipleContents()
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) {
+            viewModel.addBatchFiles(uris)
+            isMultiSelectMode = true
+        }
     }
 
     val scrollState = rememberScrollState()
@@ -178,16 +206,540 @@ fun ConverterScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            UnlimitedBadge()
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                UnlimitedBadge()
+                val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+                IconButton(
+                    onClick = { viewModel.toggleDarkMode() },
+                    modifier = Modifier.testTag("converter_dark_mode_toggle")
+                ) {
+                    Icon(
+                        imageVector = if (themeMode == com.example.reader.ThemeMode.DARK) Icons.Default.LightMode else Icons.Default.DarkMode,
+                        contentDescription = "Toggle Dark Mode",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        // Conversion Mode Selector (Single Document vs Multi-Select Batch)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("converter_mode_selector"),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            FilterChip(
+                selected = !isMultiSelectMode,
+                onClick = { isMultiSelectMode = false },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Description,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                },
+                label = { Text("Single File") },
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("mode_chip_single")
+            )
+
+            FilterChip(
+                selected = isMultiSelectMode,
+                onClick = { isMultiSelectMode = true },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Queue,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                },
+                label = {
+                    Text(if (batchQueue.isNotEmpty()) "Batch Queue (${batchQueue.size})" else "Multi-Select (Batch)")
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("mode_chip_multi_select")
+            )
         }
 
         // PDF Selector Area
-        if (selectedUri == null) {
+        if (isMultiSelectMode) {
+            // MULTI-SELECT MODE
+            if (batchQueue.isEmpty()) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .clickable { multiFilePickerLauncher.launch("application/pdf") }
+                        .border(
+                            width = 2.dp,
+                            brush = Brush.linearGradient(
+                                listOf(
+                                    MaterialTheme.colorScheme.primary,
+                                    MaterialTheme.colorScheme.secondary
+                                )
+                            ),
+                            shape = RoundedCornerShape(20.dp)
+                        )
+                        .testTag("multi_pdf_dropzone_card"),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(28.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(72.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                                            MaterialTheme.colorScheme.secondary.copy(alpha = 0.2f)
+                                        )
+                                    )
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Queue,
+                                contentDescription = "Select Multiple PDFs",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(36.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Text(
+                            text = "Multi-Select PDF Picker",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            textAlign = TextAlign.Center
+                        )
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Text(
+                            text = "Select multiple PDF files to queue for batch conversion. Each book will be parsed and saved to your library.",
+                            style = MaterialTheme.typography.bodySmall,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Layers,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = "Long-press files in picker to select multiple",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(20.dp))
+
+                        Button(
+                            onClick = { multiFilePickerLauncher.launch("application/pdf") },
+                            modifier = Modifier.testTag("select_multiple_pdfs_button"),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary
+                            )
+                        ) {
+                            Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Queue Multiple PDFs")
+                        }
+                    }
+                }
+
+                // Batch Feature Highlights
+                Text(
+                    text = "Batch Processing Features",
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    FeatureMiniCard(
+                        icon = Icons.Default.Layers,
+                        title = "Multi-Queue",
+                        subtitle = "Convert 10+ PDFs",
+                        modifier = Modifier.weight(1f)
+                    )
+                    FeatureMiniCard(
+                        icon = Icons.Default.AutoAwesome,
+                        title = "Auto-Extract",
+                        subtitle = "Chapters per file",
+                        modifier = Modifier.weight(1f)
+                    )
+                    FeatureMiniCard(
+                        icon = Icons.Default.Speed,
+                        title = "Direct Library",
+                        subtitle = "Saved automatically",
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            } else {
+                // Batch Queue Active View
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("batch_queue_card"),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        // Header row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primaryContainer),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Queue,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                Column {
+                                    Text(
+                                        text = "Batch Queue (${batchQueue.size})",
+                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                    val pendingCount = batchQueue.count { it.status == "Pending" }
+                                    val successCount = batchQueue.count { it.status == "Success" }
+                                    Text(
+                                        text = if (isBatchRunning) "Converting file ${batchCurrentIndex + 1} of ${batchQueue.size}"
+                                        else "$successCount completed • $pendingCount pending",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+
+                            if (!isBatchRunning) {
+                                TextButton(
+                                    onClick = { viewModel.clearBatch() },
+                                    modifier = Modifier.testTag("clear_batch_button")
+                                ) {
+                                    Text("Clear All", color = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+
+                        // Progress indicator if batch running
+                        if (isBatchRunning) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                val total = batchQueue.size.toFloat().coerceAtLeast(1f)
+                                val currentItem = batchQueue.getOrNull(batchCurrentIndex)
+                                val overallProgress = ((batchCurrentIndex + (currentItem?.progress ?: 0f)) / total).coerceIn(0f, 1f)
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Converting: ${currentItem?.fileName ?: "Document"}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Text(
+                                        text = "${(overallProgress * 100).toInt()}%",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                LinearProgressIndicator(
+                                    progress = { overallProgress },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(8.dp)
+                                        .clip(RoundedCornerShape(4.dp))
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+
+                        // Queued Items List
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            batchQueue.forEachIndexed { index, item ->
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.weight(1f),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.PictureAsPdf,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(24.dp)
+                                                )
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = item.fileName,
+                                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    Row(
+                                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        if (item.fileSizeBytes > 0L) {
+                                                            Text(
+                                                                text = formatBytes(item.fileSizeBytes),
+                                                                style = MaterialTheme.typography.bodySmall,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                            )
+                                                            Text(
+                                                                text = "•",
+                                                                style = MaterialTheme.typography.bodySmall,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                            )
+                                                        }
+                                                        Text(
+                                                            text = when (item.status) {
+                                                                "Success" -> "Converted to EPUB"
+                                                                "Converting" -> "Converting ${(item.progress * 100).toInt()}%..."
+                                                                "Failed" -> "Error: ${item.error ?: "Failed"}"
+                                                                else -> "Queued"
+                                                            },
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            color = when (item.status) {
+                                                                "Success" -> GreenSuccess
+                                                                "Failed" -> RedError
+                                                                "Converting" -> MaterialTheme.colorScheme.primary
+                                                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                                            }
+                                                        )
+                                                    }
+                                                }
+                                            }
+
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                            ) {
+                                                if (item.status == "Converting") {
+                                                    CircularProgressIndicator(
+                                                        modifier = Modifier.size(20.dp),
+                                                        strokeWidth = 2.dp
+                                                    )
+                                                } else if (item.status == "Success") {
+                                                    Icon(
+                                                        Icons.Default.CheckCircle,
+                                                        contentDescription = "Completed",
+                                                        tint = GreenSuccess,
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                } else if (item.status == "Failed") {
+                                                    Icon(
+                                                        Icons.Default.ErrorOutline,
+                                                        contentDescription = "Failed",
+                                                        tint = RedError,
+                                                        modifier = Modifier.size(20.dp)
+                                                    )
+                                                }
+
+                                                if (item.status != "Converting" && !isBatchRunning) {
+                                                    IconButton(
+                                                        onClick = { viewModel.removeBatchItem(item) },
+                                                        modifier = Modifier.size(28.dp)
+                                                    ) {
+                                                        Icon(
+                                                            Icons.Default.Close,
+                                                            contentDescription = "Remove file from queue",
+                                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                            modifier = Modifier.size(16.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // Per-item progress bar if converting
+                                        if (item.status == "Converting") {
+                                            LinearProgressIndicator(
+                                                progress = { item.progress },
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(4.dp)
+                                                    .clip(RoundedCornerShape(2.dp))
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Success banner if all finished
+                        if (batchQueue.isNotEmpty() && batchQueue.all { it.status == "Success" }) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = GreenSuccess.copy(alpha = 0.15f),
+                                border = BorderStroke(1.dp, GreenSuccess.copy(alpha = 0.4f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.CheckCircle,
+                                            contentDescription = null,
+                                            tint = GreenSuccess,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Text(
+                                            text = "All books converted!",
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                            color = GreenSuccess
+                                        )
+                                    }
+                                    onNavigateToLibrary?.let { navLib ->
+                                        TextButton(onClick = navLib) {
+                                            Text("Open Library", fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Actions row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { multiFilePickerLauncher.launch("application/pdf") },
+                                enabled = !isBatchRunning,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Add More")
+                            }
+
+                            if (isBatchRunning) {
+                                OutlinedButton(
+                                    onClick = { viewModel.cancelBatchConversion() },
+                                    modifier = Modifier
+                                        .weight(1.5f)
+                                        .height(48.dp),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                                ) {
+                                    Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Cancel Batch")
+                                }
+                            } else {
+                                val pendingFiles = batchQueue.count { it.status != "Success" }
+                                Button(
+                                    onClick = { viewModel.startBatchConversion() },
+                                    enabled = pendingFiles > 0,
+                                    modifier = Modifier
+                                        .weight(1.5f)
+                                        .height(48.dp)
+                                        .testTag("start_batch_button"),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                                ) {
+                                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Convert All ($pendingFiles)")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else if (selectedUri == null) {
+            // SINGLE FILE MODE - Dropzone
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(20.dp))
-                    .clickable { filePickerLauncher.launch("application/pdf") }
+                    .clickable { singleFilePickerLauncher.launch("application/pdf") }
                     .border(
                         width = 2.dp,
                         brush = Brush.linearGradient(
@@ -252,16 +804,33 @@ fun ConverterScreen(
 
                     Spacer(modifier = Modifier.height(20.dp))
 
-                    Button(
-                        onClick = { filePickerLauncher.launch("application/pdf") },
-                        modifier = Modifier.testTag("select_pdf_button"),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
-                        )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Select PDF File")
+                        Button(
+                            onClick = { singleFilePickerLauncher.launch("application/pdf") },
+                            modifier = Modifier.testTag("select_pdf_button"),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary
+                            )
+                        ) {
+                            Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Select PDF")
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                isMultiSelectMode = true
+                                multiFilePickerLauncher.launch("application/pdf")
+                            },
+                            modifier = Modifier.testTag("multi_select_quick_button")
+                        ) {
+                            Icon(Icons.Default.Queue, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Queue Batch")
+                        }
                     }
                 }
             }
@@ -297,7 +866,7 @@ fun ConverterScreen(
                 )
             }
         } else {
-            // Selected Document Info Card
+            // Selected Document Info Card (Single File Mode)
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -353,6 +922,24 @@ fun ConverterScreen(
                                 )
                             }
                         }
+                    }
+
+                    // Queue in Batch Button
+                    IconButton(
+                        onClick = {
+                            selectedUri?.let { uri ->
+                                viewModel.addBatchFiles(listOf(uri))
+                                viewModel.resetConversion()
+                                isMultiSelectMode = true
+                            }
+                        },
+                        modifier = Modifier.testTag("add_to_batch_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Queue,
+                            contentDescription = "Queue to Batch",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
                     }
 
                     IconButton(

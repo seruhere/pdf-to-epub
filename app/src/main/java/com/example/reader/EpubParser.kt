@@ -161,19 +161,34 @@ class EpubParser {
 
     private fun extractParagraphsFromHtml(html: String): List<String> {
         val result = mutableListOf<String>()
-        val pRegex = Regex("""<p[^>]*>(.*?)</p>""", RegexOption.DOT_MATCHES_ALL)
-        val matches = pRegex.findAll(html).toList()
+        // Match block level elements in chronological order: p, h1-h6, blockquote, li
+        val blockRegex = Regex(
+            """<(p|h[2-6]|blockquote|li)[^>]*>(.*?)</\1>""",
+            setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
+        )
+        val matches = blockRegex.findAll(html).toList()
 
         if (matches.isNotEmpty()) {
             for (match in matches) {
-                val cleaned = unescapeHtml(stripTags(match.groupValues[1])).trim()
+                val tag = match.groupValues[1].lowercase()
+                val inner = match.groupValues[2]
+                val cleaned = unescapeHtml(stripTags(inner)).trim()
                 if (cleaned.isNotBlank()) {
-                    result.add(cleaned)
+                    val formatted = when {
+                        tag.startsWith("h") -> "### $cleaned"
+                        tag == "blockquote" -> "❝ $cleaned"
+                        tag == "li" -> "• $cleaned"
+                        else -> cleaned
+                    }
+                    result.add(formatted)
                 }
             }
         } else {
             // Fallback: extract all body text split by double newlines or block elements
-            val bodyRegex = Regex("""<body[^>]*>(.*?)</body>""", RegexOption.DOT_MATCHES_ALL)
+            val bodyRegex = Regex(
+                """<body[^>]*>(.*?)</body>""",
+                setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
+            )
             val bodyContent = bodyRegex.find(html)?.groupValues?.get(1) ?: html
             val textOnly = stripTags(bodyContent)
             textOnly.lines().map { unescapeHtml(it).trim() }.filter { it.isNotBlank() }.forEach {

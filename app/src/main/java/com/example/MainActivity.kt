@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBars
@@ -40,7 +41,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.core.content.FileProvider
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.reader.ThemeMode
 import com.example.ui.screens.ConverterScreen
 import com.example.ui.screens.LibraryScreen
 import com.example.ui.screens.ReaderScreen
@@ -68,8 +71,16 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         setContent {
-            MyApplicationTheme {
-                val viewModel: ConverterViewModel = viewModel()
+            val viewModel: ConverterViewModel = viewModel()
+            val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+            val systemInDark = isSystemInDarkTheme()
+            val isDark = when (themeMode) {
+                ThemeMode.SYSTEM -> systemInDark
+                ThemeMode.LIGHT -> false
+                ThemeMode.DARK -> true
+            }
+
+            MyApplicationTheme(darkTheme = isDark, dynamicColor = false) {
                 MainAppContent(
                     viewModel = viewModel,
                     onShareEpub = { filePath, title -> shareEpub(filePath, title) }
@@ -161,7 +172,8 @@ fun MainAppContent(
                     ScreenTab.CONVERT -> ConverterScreen(
                         viewModel = viewModel,
                         onNavigateToReader = { selectedTab = ScreenTab.READER },
-                        onShareEpub = onShareEpub
+                        onShareEpub = onShareEpub,
+                        onNavigateToLibrary = { selectedTab = ScreenTab.LIBRARY }
                     )
                     ScreenTab.LIBRARY -> LibraryScreen(
                         viewModel = viewModel,
@@ -174,7 +186,8 @@ fun MainAppContent(
                     )
                     ScreenTab.READER -> ReaderScreen(
                         viewModel = viewModel,
-                        onNavigateToLibrary = { selectedTab = ScreenTab.LIBRARY }
+                        onNavigateToLibrary = { selectedTab = ScreenTab.LIBRARY },
+                        onShareEpub = onShareEpub
                     )
                     ScreenTab.TOOLS -> ToolsScreen(
                         viewModel = viewModel

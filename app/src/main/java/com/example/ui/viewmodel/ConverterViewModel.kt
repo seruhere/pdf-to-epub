@@ -1,7 +1,9 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
+import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.PdfToEpubApp
@@ -16,6 +18,8 @@ import com.example.data.model.ConvertedBook
 import com.example.reader.EpubParser
 import com.example.reader.ParsedEpubBook
 import com.example.reader.ReaderSettings
+import com.example.reader.ReaderTheme
+import com.example.reader.ThemeMode
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -32,9 +36,17 @@ enum class BookSortOrder {
     PAGES_DESC
 }
 
+enum class BookFilter {
+    ALL,
+    FAVORITES,
+    READING,
+    COMPLETED
+}
+
 data class BatchItem(
     val uri: Uri,
     val fileName: String,
+    val fileSizeBytes: Long = 0L,
     var status: String = "Pending",
     var progress: Float = 0f,
     var error: String? = null
@@ -45,6 +57,32 @@ class ConverterViewModel(application: Application) : AndroidViewModel(applicatio
     private val repository = (application as PdfToEpubApp).repository
     private val converter = PdfToEpubConverter(application)
     private val epubParser = EpubParser()
+
+    private val prefs = application.getSharedPreferences("reader_app_prefs", Context.MODE_PRIVATE)
+
+    // Dark Mode / Theme Mode state
+    private val _themeMode = MutableStateFlow(
+        when (prefs.getString("app_theme_mode", "SYSTEM")) {
+            "LIGHT" -> ThemeMode.LIGHT
+            "DARK" -> ThemeMode.DARK
+            else -> ThemeMode.SYSTEM
+        }
+    )
+    val themeMode: StateFlow<ThemeMode> = _themeMode.asStateFlow()
+
+    fun setThemeMode(mode: ThemeMode) {
+        _themeMode.value = mode
+        prefs.edit().putString("app_theme_mode", mode.name).apply()
+    }
+
+    fun toggleDarkMode() {
+        val next = when (_themeMode.value) {
+            ThemeMode.DARK -> ThemeMode.LIGHT
+            ThemeMode.LIGHT -> ThemeMode.DARK
+            ThemeMode.SYSTEM -> ThemeMode.DARK
+        }
+        setThemeMode(next)
+    }
 
     // Single conversion state
     private val _selectedPdfUri = MutableStateFlow<Uri?>(null)
@@ -79,6 +117,7 @@ class ConverterViewModel(application: Application) : AndroidViewModel(applicatio
     val lastConvertedBook: StateFlow<ConvertedBook?> = _lastConvertedBook.asStateFlow()
 
     private var conversionJob: Job? = null
+    private var batchJob: Job? = null
 
     // Library state
     private val _searchQuery = MutableStateFlow("")
@@ -87,12 +126,16 @@ class ConverterViewModel(application: Application) : AndroidViewModel(applicatio
     private val _sortOrder = MutableStateFlow(BookSortOrder.DATE_DESC)
     val sortOrder: StateFlow<BookSortOrder> = _sortOrder.asStateFlow()
 
+    private val _bookFilter = MutableStateFlow(BookFilter.ALL)
+    val bookFilter: StateFlow<BookFilter> = _bookFilter.asStateFlow()
+
     val libraryBooks: StateFlow<List<ConvertedBook>> = combine(
         repository.allBooks,
         _searchQuery,
-        _sortOrder
-    ) { books, query, sort ->
-        val filtered = if (query.isBlank()) {
+        _sortOrder,
+        _bookFilter
+    ) { books, query, sort, filter ->
+        var filtered = if (query.isBlank()) {
             books
         } else {
             books.filter {
@@ -101,6 +144,19 @@ class ConverterViewModel(application: Application) : AndroidViewModel(applicatio
                 it.originalFileName.contains(query, ignoreCase = true)
             }
         }
+
+        filtered = when (filter) {
+            BookFilter.ALL -> filtered
+            BookFilter.FAVORITES -> filtered.filter { it.isFavorite }
+            BookFilter.READING -> filtered.filter {
+                val total = it.chapterCount.coerceAtLeast(1)
+                it.lastReadChapterIndex in 0 until (total - 1)
+            }
+            BookFilter.COMPLETED -> filtered.filter {
+                it.chapterCount > 0 && it.lastReadChapterIndex >= it.chapterCount - 1
+            }
+        }
+
         when (sort) {
             BookSortOrder.DATE_DESC -> filtered.sortedByDescending { it.convertedAtMillis }
             BookSortOrder.TITLE_ASC -> filtered.sortedBy { it.title.lowercase() }
@@ -265,65 +321,153 @@ class ConverterViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun setBookFilter(filter: BookFilter) {
+        _bookFilter.value = filter
+    }
+
+    fun updateBookMetadata(book: ConvertedBook, newTitle: String, newAuthor: String) {
+        viewModelScope.launch {
+            val updated = book.copy(
+                title = newTitle.trim().ifBlank { book.title },
+                author = newAuthor.trim().ifBlank { book.author }
+            )
+            repository.updateBook(updated)
+            if (_activeBookRecord.value?.id == book.id) {
+                _activeBookRecord.value = updated
+            }
+        }
+    }
+
+    fun resetReadingProgress(book: ConvertedBook) {
+        viewModelScope.launch {
+            repository.updateReadingProgress(book.id, 0, 0)
+            if (_activeBookRecord.value?.id == book.id) {
+                _currentChapterIndex.value = 0
+            }
+        }
+    }
+
+    fun updateReadingProgress(book: ConvertedBook, chapterIndex: Int) {
+        val total = book.chapterCount.coerceAtLeast(1)
+        val validChapter = chapterIndex.coerceIn(0, total - 1)
+        viewModelScope.launch {
+            repository.updateReadingProgress(book.id, validChapter, 0)
+            if (_activeBookRecord.value?.id == book.id) {
+                _currentChapterIndex.value = validChapter
+            }
+        }
+    }
+
     // Batch Conversion
     fun addBatchFiles(uris: List<Uri>) {
+        val context = getApplication<Application>()
         val items = uris.map { uri ->
-            val name = uri.lastPathSegment?.substringAfterLast('/') ?: "document.pdf"
-            BatchItem(uri = uri, fileName = name)
+            var name = "document.pdf"
+            var size = 0L
+            try {
+                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    if (cursor.moveToFirst()) {
+                        if (nameIndex != -1) cursor.getString(nameIndex)?.let { name = it }
+                        if (sizeIndex != -1) size = cursor.getLong(sizeIndex)
+                    }
+                }
+            } catch (e: Exception) {
+                name = uri.lastPathSegment?.substringAfterLast('/') ?: "document.pdf"
+            }
+            BatchItem(uri = uri, fileName = name, fileSizeBytes = size)
         }
         _batchQueue.value = _batchQueue.value + items
     }
 
+    fun removeBatchItem(item: BatchItem) {
+        if (_isBatchRunning.value) return
+        _batchQueue.value = _batchQueue.value.filter { it != item }
+    }
+
+    fun removeBatchItemAt(index: Int) {
+        if (_isBatchRunning.value) return
+        val current = _batchQueue.value.toMutableList()
+        if (index in current.indices) {
+            current.removeAt(index)
+            _batchQueue.value = current
+        }
+    }
+
     fun clearBatch() {
+        cancelBatchConversion()
         _batchQueue.value = emptyList()
         _isBatchRunning.value = false
     }
 
+    fun cancelBatchConversion() {
+        batchJob?.cancel()
+        batchJob = null
+        _isBatchRunning.value = false
+        val current = _batchQueue.value
+        current.forEach { item ->
+            if (item.status == "Converting") {
+                item.status = "Cancelled"
+            }
+        }
+        _batchQueue.value = ArrayList(current)
+    }
+
     fun startBatchConversion() {
         val queue = _batchQueue.value.ifEmpty { return }
+        if (_isBatchRunning.value) return
         _isBatchRunning.value = true
 
-        viewModelScope.launch {
-            queue.forEachIndexed { index, item ->
-                _batchCurrentIndex.value = index
-                item.status = "Converting"
-                _batchQueue.value = ArrayList(_batchQueue.value)
+        batchJob = viewModelScope.launch {
+            try {
+                queue.forEachIndexed { index, item ->
+                    // Skip items that are already successfully converted
+                    if (item.status == "Success") return@forEachIndexed
 
-                val metadataResult = converter.extractMetadata(item.uri)
-                val meta = metadataResult.getOrNull()
-                val options = ConversionOptions(
-                    title = meta?.title ?: item.fileName.substringBeforeLast("."),
-                    author = meta?.author ?: "Unknown",
-                    extractCover = true
-                )
+                    _batchCurrentIndex.value = index
+                    item.status = "Converting"
+                    item.progress = 0f
+                    item.error = null
+                    _batchQueue.value = ArrayList(_batchQueue.value)
 
-                val convertResult = converter.convert(item.uri, options) { progress ->
-                    item.progress = progress.percentage
+                    val metadataResult = converter.extractMetadata(item.uri)
+                    val meta = metadataResult.getOrNull()
+                    val options = ConversionOptions(
+                        title = meta?.title ?: item.fileName.substringBeforeLast("."),
+                        author = meta?.author ?: "Unknown",
+                        extractCover = true
+                    )
+
+                    val convertResult = converter.convert(item.uri, options) { progress ->
+                        item.progress = progress.percentage
+                        _batchQueue.value = ArrayList(_batchQueue.value)
+                    }
+
+                    convertResult.onSuccess { file ->
+                        item.status = "Success"
+                        item.progress = 1.0f
+                        val coversDir = File(getApplication<Application>().filesDir, "covers")
+                        val coverFile = coversDir.listFiles()?.maxByOrNull { it.lastModified() }
+                        val book = ConvertedBook(
+                            title = options.title,
+                            author = options.author,
+                            originalFileName = item.fileName,
+                            epubFilePath = file.absolutePath,
+                            coverImagePath = coverFile?.absolutePath,
+                            fileSizeBytes = file.length(),
+                            pageCount = meta?.pageCount ?: 1
+                        )
+                        repository.saveBook(book)
+                    }.onFailure { err ->
+                        item.status = "Failed"
+                        item.error = err.localizedMessage
+                    }
                     _batchQueue.value = ArrayList(_batchQueue.value)
                 }
-
-                convertResult.onSuccess { file ->
-                    item.status = "Success"
-                    item.progress = 1.0f
-                    val coversDir = File(getApplication<Application>().filesDir, "covers")
-                    val coverFile = coversDir.listFiles()?.maxByOrNull { it.lastModified() }
-                    val book = ConvertedBook(
-                        title = options.title,
-                        author = options.author,
-                        originalFileName = item.fileName,
-                        epubFilePath = file.absolutePath,
-                        coverImagePath = coverFile?.absolutePath,
-                        fileSizeBytes = file.length(),
-                        pageCount = meta?.pageCount ?: 1
-                    )
-                    repository.saveBook(book)
-                }.onFailure { err ->
-                    item.status = "Failed"
-                    item.error = err.localizedMessage
-                }
-                _batchQueue.value = ArrayList(_batchQueue.value)
+            } finally {
+                _isBatchRunning.value = false
             }
-            _isBatchRunning.value = false
         }
     }
 
@@ -348,6 +492,65 @@ class ConverterViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun openEpubFromUri(uri: Uri) {
+        _isLoadingReader.value = true
+        viewModelScope.launch {
+            try {
+                val context = getApplication<Application>()
+                val contentResolver = context.contentResolver
+                val tempDir = File(context.cacheDir, "opened_epubs").apply { mkdirs() }
+
+                var displayName = "Imported Book.epub"
+                contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (nameIndex != -1 && cursor.moveToFirst()) {
+                        cursor.getString(nameIndex)?.let { displayName = it }
+                    }
+                }
+
+                val destFile = File(tempDir, "${System.currentTimeMillis()}_$displayName")
+                contentResolver.openInputStream(uri)?.use { input ->
+                    destFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+
+                val parseResult = epubParser.parse(destFile)
+                _isLoadingReader.value = false
+                parseResult.onSuccess { parsed ->
+                    _activeReaderBook.value = parsed
+                    _currentChapterIndex.value = 0
+
+                    val coverPath = if (parsed.coverBytes != null) {
+                        val coversDir = File(context.filesDir, "covers").apply { mkdirs() }
+                        val cFile = File(coversDir, "cover_${System.currentTimeMillis()}.jpg")
+                        cFile.writeBytes(parsed.coverBytes)
+                        cFile.absolutePath
+                    } else null
+
+                    val bookRecord = ConvertedBook(
+                        title = parsed.title.ifBlank { displayName.substringBeforeLast(".") },
+                        author = parsed.author.ifBlank { "Unknown Author" },
+                        originalFileName = displayName,
+                        epubFilePath = destFile.absolutePath,
+                        coverImagePath = coverPath,
+                        fileSizeBytes = destFile.length(),
+                        pageCount = parsed.chapters.size,
+                        chapterCount = parsed.chapters.size,
+                        lastReadChapterIndex = 0
+                    )
+                    val id = repository.saveBook(bookRecord)
+                    _activeBookRecord.value = bookRecord.copy(id = id)
+                }.onFailure { err ->
+                    _activeReaderBook.value = null
+                }
+            } catch (e: Exception) {
+                _isLoadingReader.value = false
+                _activeReaderBook.value = null
+            }
+        }
+    }
+
     fun setChapter(index: Int) {
         val book = _activeReaderBook.value ?: return
         val validIndex = index.coerceIn(0, (book.chapters.size - 1).coerceAtLeast(0))
@@ -357,6 +560,13 @@ class ConverterViewModel(application: Application) : AndroidViewModel(applicatio
             viewModelScope.launch {
                 repository.updateReadingProgress(record.id, validIndex, 0)
             }
+        }
+    }
+
+    fun updateReadingScrollOffset(offset: Int) {
+        val record = _activeBookRecord.value ?: return
+        viewModelScope.launch {
+            repository.updateReadingProgress(record.id, _currentChapterIndex.value, offset)
         }
     }
 
@@ -371,6 +581,12 @@ class ConverterViewModel(application: Application) : AndroidViewModel(applicatio
         if (_currentChapterIndex.value > 0) {
             setChapter(_currentChapterIndex.value - 1)
         }
+    }
+
+    fun toggleReaderDarkTheme() {
+        _readerSettings.value = _readerSettings.value.copy(
+            theme = if (_readerSettings.value.theme.isDark) ReaderTheme.LIGHT else ReaderTheme.DARK
+        )
     }
 
     fun updateReaderSettings(updater: (ReaderSettings) -> ReaderSettings) {
