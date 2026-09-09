@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.Crossfade
@@ -125,6 +126,15 @@ fun MainAppContent(
     modifier: Modifier = Modifier
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(ScreenTab.CONVERT) }
+
+    // Intercept back presses globally to act like a backstack
+    BackHandler(enabled = selectedTab != ScreenTab.CONVERT) {
+        if (selectedTab == ScreenTab.READER) {
+            selectedTab = ScreenTab.LIBRARY
+        } else {
+            selectedTab = ScreenTab.CONVERT
+        }
+    }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),

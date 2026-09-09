@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -146,6 +147,22 @@ fun ReaderScreen(
     var showJumpToPageDialog by remember { mutableStateOf(false) }
     var showReadingSlider by remember { mutableStateOf(true) }
     var pendingScrollFraction by remember { mutableStateOf<Float?>(null) }
+
+    // Intercept system back press in Reading mode so it navigates back to the application menu
+    BackHandler(enabled = true) {
+        when {
+            showTocSheet -> showTocSheet = false
+            showSettingsSheet -> showSettingsSheet = false
+            showSwitchBookSheet -> showSwitchBookSheet = false
+            showJumpToPageDialog -> showJumpToPageDialog = false
+            isSearchVisible -> {
+                isSearchVisible = false
+                chapterSearchQuery = ""
+            }
+            ttsState.isVisible -> viewModel.setTtsVisible(false)
+            else -> onNavigateToLibrary()
+        }
+    }
 
     val scrollState = rememberScrollState()
     val coroutineScope = rememberCoroutineScope()
