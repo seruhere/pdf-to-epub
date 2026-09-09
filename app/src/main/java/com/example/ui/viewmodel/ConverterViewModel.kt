@@ -503,6 +503,13 @@ class ConverterViewModel(application: Application) : AndroidViewModel(applicatio
 
         viewModelScope.launch {
             val file = File(book.epubFilePath)
+            if (!file.exists()) {
+                _isLoadingReader.value = false
+                _activeReaderBook.value = null
+                _cacheOperationMessage.value = "Error: Book file is missing. It may have been cleared from the cache."
+                return@launch
+            }
+
             val result = epubParser.parse(file)
             _isLoadingReader.value = false
             result.onSuccess { parsed ->
@@ -510,8 +517,9 @@ class ConverterViewModel(application: Application) : AndroidViewModel(applicatio
                 if (book.chapterCount != parsed.chapters.size) {
                     repository.saveBook(book.copy(chapterCount = parsed.chapters.size))
                 }
-            }.onFailure {
+            }.onFailure { err ->
                 _activeReaderBook.value = null
+                _cacheOperationMessage.value = "Error opening book: ${err.localizedMessage}"
             }
         }
     }
@@ -522,7 +530,7 @@ class ConverterViewModel(application: Application) : AndroidViewModel(applicatio
             try {
                 val context = getApplication<Application>()
                 val contentResolver = context.contentResolver
-                val tempDir = File(context.cacheDir, "opened_epubs").apply { mkdirs() }
+                val destDir = File(context.filesDir, "epubs").apply { mkdirs() }
 
                 var displayName = "Imported Book.epub"
                 contentResolver.query(uri, null, null, null, null)?.use { cursor ->
@@ -532,7 +540,7 @@ class ConverterViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                 }
 
-                val destFile = File(tempDir, "${System.currentTimeMillis()}_$displayName")
+                val destFile = File(destDir, "${System.currentTimeMillis()}_$displayName")
                 contentResolver.openInputStream(uri)?.use { input ->
                     destFile.outputStream().use { output ->
                         input.copyTo(output)
@@ -746,9 +754,6 @@ class ConverterViewModel(application: Application) : AndroidViewModel(applicatio
                 try {
                     deleteDirChildrenRecursively(context.externalCacheDir)
                 } catch (_: Exception) {}
-
-                // Re-create necessary subfolders for ongoing app functions
-                File(context.cacheDir, "opened_epubs").mkdirs()
 
                 val remainingBytes = calculateTotalCacheBytes()
                 _cacheSizeBytes.value = remainingBytes
