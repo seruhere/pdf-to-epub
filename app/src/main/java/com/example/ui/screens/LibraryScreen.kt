@@ -149,6 +149,16 @@ fun LibraryScreen(
         exportDocLauncher.launch(safeName)
     }
 
+    // Launcher for importing EPUB
+    val importEpubLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { targetUri ->
+        if (targetUri != null) {
+            viewModel.openEpubFromUri(targetUri)
+            Toast.makeText(context, "Importing EPUB into Library...", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     // Delete Confirmation Dialog
     if (bookToDelete != null) {
         AlertDialog(
@@ -438,7 +448,7 @@ fun LibraryScreen(
 
         // Add Book Floating Action Button
         FloatingActionButton(
-            onClick = onNavigateToConvert,
+            onClick = { importEpubLauncher.launch(arrayOf("application/epub+zip")) },
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(24.dp),
@@ -447,12 +457,13 @@ fun LibraryScreen(
         ) {
             Icon(
                 imageVector = Icons.Default.Add,
-                contentDescription = "Add New Book"
+                contentDescription = "Import EPUB Book"
             )
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BookListItemCard(
     book: ConvertedBook,
@@ -472,10 +483,9 @@ fun BookListItemCard(
     }
 
     Card(
+        onClick = onOpenReader,
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .clickable { onOpenReader() }
             .testTag("book_card_${book.id}"),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
